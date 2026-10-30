@@ -101,6 +101,50 @@ class EngineTest {
         // Conditions에는 "우선순위"나 "가중치" 칸이 없다 → LLM이 무엇을 출력해도 한 사람 = 한 표
         assertThat(Conditions.class.getRecordComponents())
                 .extracting(java.lang.reflect.RecordComponent::getName)
-                .containsExactly("allergy", "mustNot", "preferNot", "want", "maxPrice");
+                .containsExactly("allergy", "allergyOther", "mustNot", "preferNot", "want",
+                        "dishNever", "dishAvoid", "dishWant", "maxPrice");
+    }
+
+    private static Conditions dishes(Set<String> never, Set<String> avoid, Set<String> want) {
+        return new Conditions(Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), never, avoid, want, null);
+    }
+
+    @Test
+    void 목록에_없는_메뉴는_식당_메뉴에서_찾는다() {
+        var curry = MockRestaurants.byId(14);   // 카레 하우스
+        var cutlet = MockRestaurants.byId(3);   // 돈가스 상회 (카레돈가스)
+        var gimbap = MockRestaurants.byId(8);   // 김밥 천사 (분식)
+        var c = dishes(Set.of(), Set.of("카레"), Set.of());
+        assertThat(Engine.satisfaction(curry, c, Set.of())).isZero();
+        assertThat(Engine.satisfaction(cutlet, c, Set.of())).isZero();   // "카레" ⊂ "카레돈가스"
+        assertThat(Engine.satisfaction(gimbap, c, Set.of())).isEqualTo(1.0); // 예전처럼 분식이 감점되지 않는다
+        // 동의어: "커리"도 카레로 본다
+        assertThat(Engine.satisfaction(curry, dishes(Set.of(), Set.of("커리"), Set.of()), Set.of())).isZero();
+    }
+
+    @Test
+    void 절대_안_되는_메뉴는_후보에서_빠지고_못_찾은_메뉴는_알려준다() {
+        var r = rank(Map.of("a", dishes(Set.of("짜장면"), Set.of(), Set.of("랍스터")),
+                "b", Conditions.empty(), "c", Conditions.empty()));
+        assertThat(r.ranking()).noneMatch(s -> s.restaurant().name().equals("짬뽕 대가"));
+        assertThat(Engine.unmatchedDishes(dishes(Set.of("짜장면"), Set.of(), Set.of("랍스터")), MockRestaurants.ALL))
+                .containsExactly("랍스터");
+    }
+
+    @Test
+    void 절대_안_됨은_태그와_메뉴를_합쳐_2개까지() {
+        var c = new Conditions(Set.of(), Set.of(), Set.of("중식"), Set.of(), Set.of(),
+                new java.util.LinkedHashSet<>(List.of("카레", "마라탕")), Set.of(), Set.of(), null);
+        assertThat(c.mustNot()).containsExactly("중식");
+        assertThat(c.dishNever()).containsExactly("카레");
+        assertThat(c.dishAvoid()).containsExactly("마라탕");
+    }
+
+    @Test
+    void 거를_수_없는_알레르기는_후보를_빼지_않는다() {
+        var nut = new Conditions(Set.of(), Set.of("땅콩"), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), null);
+        var withNut = rank(Map.of("a", nut, "b", Conditions.empty(), "c", Conditions.empty()));
+        var without = rank(Map.of("a", Conditions.empty(), "b", Conditions.empty(), "c", Conditions.empty()));
+        assertThat(withNut.ranking()).hasSameSizeAs(without.ranking());
     }
 }

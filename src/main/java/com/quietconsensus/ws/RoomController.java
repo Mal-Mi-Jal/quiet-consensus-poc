@@ -69,6 +69,11 @@ public class RoomController {
         rooms.relax(roomId, who.getName(), msg.tag());
     }
 
+    @MessageMapping("/room/{roomId}/allergy-check")
+    public void allergyCheck(@DestinationVariable String roomId, Principal who) {
+        rooms.requestAllergyCheck(roomId, who.getName());
+    }
+
     @MessageMapping("/room/{roomId}/finish")
     public void finish(@DestinationVariable String roomId) {
         rooms.finish(roomId);

@@ -23,6 +23,7 @@ final class Room {
         boolean submitted;
         int vetoLeft = 1;
         String notice;
+        boolean allergyRequested;
 
         Person(String key) {
             this.key = key;

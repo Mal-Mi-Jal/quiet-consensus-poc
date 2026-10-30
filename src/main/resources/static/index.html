@@ -16,14 +16,25 @@
   <!-- ① 비밀 입력 -->
   <section id="input">
     <div class="card">
-      <h2>🔒 알레르기 (절대 완화되지 않아요)</h2>
+      <h2>🔒 알레르기 (직접 골라 주세요)</h2>
+      <p class="hint" style="margin:0 0 8px">가게 종류로 거를 수 있어요 — 해당 가게는 후보에서 빠져요</p>
       <div class="chips" id="allergyChips"></div>
-      <p class="hint">목록에 없는 알레르기는 이 앱이 걸러 주지 못해요. 꼭 직접 확인하세요.</p>
+      <p class="hint" style="margin:14px 0 8px">자동으로 거를 수 없어요 — 정해지면 나에게만 “직접 확인하세요” 알림이 와요</p>
+      <div class="chips" id="allergyOtherChips"></div>
+      <div class="row" style="margin-top:10px">
+        <input id="allergyOtherText" maxlength="20" placeholder="기타 알레르기 (예: 복숭아)" style="flex:3;font:inherit;padding:9px;border:1px solid var(--line);border-radius:10px">
+        <button class="sec" id="allergyOtherAdd" style="flex:1">추가</button>
+      </div>
+      <p class="hint">AI는 알레르기를 대신 넣지 않아요. 이 앱은 안전을 보장하지 못하니 주문 전에 꼭 확인하세요.</p>
     </div>
     <div class="card">
       <h2>음식 취향 (눌러서 바꾸기)</h2>
       <div class="legend"><span class="ok">● 먹고 싶음</span><span style="color:var(--avoid)">● 가능하면 피함</span><span style="color:var(--never)">● 절대 안 됨 (최대 2개)</span></div>
       <div class="chips" id="foodChips" style="margin-top:10px"></div>
+      <div id="dishBox" class="hidden" style="margin-top:12px">
+        <p class="hint" style="margin:0 0 8px">메뉴 (AI가 정리한 것, 눌러서 바꾸기 · 한 번 더 누르면 빠져요)</p>
+        <div class="chips" id="dishChips"></div>
+      </div>
       <div style="margin-top:12px">
         <select id="price">
           <option value="">예산 제한 없음</option>
@@ -63,12 +74,18 @@
       <p class="hint">내 '절대 안 됨' 중 하나를 '가능하면 피함'으로 바꿔 줄 수 있나요? 누가 바꿨는지는 아무도 몰라요.</p>
       <div class="chips" id="relaxChips" style="margin-top:8px"></div>
     </div>
+    <p class="hint" id="unmatched"></p>
     <p class="hint" id="myReaction"></p>
     <p class="hint">반응은 라운드가 끝날 때 한꺼번에 반영돼요. 그 전엔 마음을 바꿔도 돼요. 거부권은 바로 반영되고 새 라운드가 시작돼요.</p>
   </section>
 
   <section id="done" class="hidden">
     <div class="card"><div class="sub" style="margin:0">확정!</div><div class="top-name" id="doneName"></div></div>
+    <div class="notice hidden" id="allergyCard">
+      <div id="allergyCheckText"></div>
+      <button class="sec" id="allergyRequestBtn" style="margin-top:10px">익명으로 단체에 확인 요청하기</button>
+      <p class="hint" style="margin:8px 0 0">누르면 공용 화면에 “확인이 필요한 알레르기가 있어요”가 이름 없이 떠요. 누르지 않으면 아무에게도 안 보여요.</p>
+    </div>
   </section>
 </div>
 
@@ -78,6 +95,11 @@ const STATES = ["", "want", "avoid", "never"];
 const room = new URLSearchParams(location.search).get("room") || "lunch";
 const state = Object.fromEntries(FOODS.map(f => [f, ""]));
 const allergy = new Set();
+// 가게 종류로 거를 수 없는 알레르기 (식약처 표시 대상 중 일부 — 전체 목록은 고시 원문 확인 필요)
+const ALLERGY_OTHER = ["땅콩", "우유", "달걀", "밀", "대두", "메밀", "견과류"];
+const allergyOther = new Set();
+const dishes = new Map(); // 메뉴 이름 → "want" | "avoid" | "never"
+const neverCount = () => FOODS.filter(x => state[x] === "never").length + [...dishes.values()].filter(v => v === "never").length;
 let lastVersion = -1, topId = null, phase = "INPUT";
 let round = 0, roundDeadline = 0, reacted = 0, joined = 0, myReaction = null;
 const $ = id => document.getElementById(id);
@@ -99,17 +121,30 @@ function renderChips() {
   const a = $("allergyChips"); a.replaceChildren();
   ["갑각류","해산물"].forEach(f => a.appendChild(chip(f, allergy.has(f) ? "allergy" : "", () => {
     allergy.has(f) ? allergy.delete(f) : allergy.add(f); renderChips(); })));
+  const o = $("allergyOtherChips"); o.replaceChildren();
+  [...new Set([...ALLERGY_OTHER, ...allergyOther])].forEach(f => o.appendChild(chip(f, allergyOther.has(f) ? "allergy" : "", () => {
+    allergyOther.has(f) ? allergyOther.delete(f) : allergyOther.add(f); renderChips(); })));
   const c = $("foodChips"); c.replaceChildren();
   FOODS.forEach(f => c.appendChild(chip(f, state[f], () => {
     let next = STATES[(STATES.indexOf(state[f]) + 1) % STATES.length];
-    const nevers = FOODS.filter(x => state[x] === "never").length;
-    if (next === "never" && nevers >= 2) next = ""; // 절대 안 됨은 최대 2개
+    if (next === "never" && neverCount() >= 2) next = ""; // 절대 안 됨은 태그+메뉴 합쳐 최대 2개
     state[f] = next; renderChips(); })));
+  const d = $("dishChips"); d.replaceChildren();
+  $("dishBox").classList.toggle("hidden", dishes.size === 0);
+  dishes.forEach((v, name) => d.appendChild(chip(name, v, () => {
+    let next = STATES[(STATES.indexOf(v) + 1) % STATES.length];
+    if (next === "never" && neverCount() >= 2) next = "";
+    if (next === "") dishes.delete(name); else dishes.set(name, next);
+    renderChips(); })));
 }
 function conditions() {
   const pick = s => FOODS.filter(f => state[f] === s);
+  const pickDish = s => [...dishes].filter(([, v]) => v === s).map(([k]) => k);
   const p = $("price").value;
-  return { allergy: [...allergy], mustNot: pick("never"), preferNot: pick("avoid"), want: pick("want"), maxPrice: p ? Number(p) : null };
+  return { allergy: [...allergy], allergyOther: [...allergyOther],
+           mustNot: pick("never"), preferNot: pick("avoid"), want: pick("want"),
+           dishNever: pickDish("never"), dishAvoid: pickDish("avoid"), dishWant: pickDish("want"),
+           maxPrice: p ? Number(p) : null };
 }
 function notice(msg) {
   const n = $("notice");
@@ -155,20 +190,34 @@ function onPrivate(p) {
   $("relaxCard").classList.toggle("hidden", p.relaxable.length === 0);
   const r = $("relaxChips"); r.replaceChildren();
   p.relaxable.forEach(t => r.appendChild(chip(t + " 풀기", "never", () => send("relax", { tag: t }))));
+  // 내가 적은 메뉴인데 후보 어디서도 안 파는 것 — 조용히 무시하지 않고 알려 준다
+  $("unmatched").textContent = p.unmatchedDishes && p.unmatchedDishes.length
+    ? `후보 중에 ${p.unmatchedDishes.join(", ")}을(를) 파는 곳이 없어서 반영되지 않았어요` : "";
+  // 확정 후: 이 앱이 거를 수 없는 내 알레르기 → 나에게만 확인 카드
+  $("allergyCard").classList.toggle("hidden", !p.allergyCheck);
+  if (p.allergyCheck) {
+    $("allergyCheckText").textContent = "⚠️ " + p.allergyCheck;
+    $("allergyRequestBtn").disabled = p.allergyRequested;
+    $("allergyRequestBtn").textContent = p.allergyRequested ? "확인 요청을 보냈어요" : "익명으로 단체에 확인 요청하기";
+  }
 }
 function onParsed(r) {
   const box = $("parsed"); box.classList.remove("hidden"); box.replaceChildren();
   const line = (label, arr) => { if (arr.length) { const d = document.createElement("div"); d.textContent = label + arr.join(", "); box.appendChild(d); } };
   if (r.invalid) { line("⚠️ ", ["정리에 실패했어요. 칩으로 입력해 주세요"]); return; }
   const c = r.conditions;
-  line("🔒 알레르기: ", c.allergy); line("🚫 절대 안 됨: ", c.mustNot); line("🙅 가능하면 피함: ", c.preferNot); line("😋 먹고 싶음: ", c.want);
+  line("🚫 절대 안 됨: ", [...c.mustNot, ...c.dishNever]); line("🙅 가능하면 피함: ", [...c.preferNot, ...c.dishAvoid]);
+  line("😋 먹고 싶음: ", [...c.want, ...c.dishWant]);
   if (c.maxPrice) line("💸 예산: ", [c.maxPrice.toLocaleString() + "원 이하"]);
+  if (r.allergyHints.length) line("⚠️ 알레르기 같은 말이 있어요: ", [r.allergyHints.join(", ") + " → 위 알레르기 칩에서 직접 골라 주세요"]);
   if (!box.childNodes.length) line("", ["음식 조건은 없었어요" + (r.ignored.length ? " (식당과 관계없는 내용은 반영하지 않아요)" : "")]);
   const ok = document.createElement("button"); ok.className = "sec"; ok.textContent = "맞아요, 칩에 더하기"; ok.style.marginTop = "8px";
   ok.onclick = () => {
-    c.allergy.forEach(f => { if (["갑각류","해산물"].includes(f)) allergy.add(f); });
+    // 알레르기는 더하지 않는다 — 사용자가 칩에서 직접 고른다
     c.want.forEach(f => state[f] = "want"); c.preferNot.forEach(f => state[f] = "avoid");
-    c.mustNot.forEach(f => { if (FOODS.filter(x => state[x] === "never").length < 2) state[f] = "never"; else state[f] = "avoid"; });
+    c.mustNot.forEach(f => { state[f] = neverCount() < 2 ? "never" : "avoid"; });
+    c.dishWant.forEach(d => dishes.set(d, "want")); c.dishAvoid.forEach(d => dishes.set(d, "avoid"));
+    c.dishNever.forEach(d => dishes.set(d, neverCount() < 2 ? "never" : "avoid"));
     if (c.maxPrice) $("price").value = [8000,10000,12000,15000].find(v => v >= c.maxPrice) || "";
     $("text").value = ""; box.classList.add("hidden"); renderChips();
   };
@@ -181,6 +230,11 @@ $("submitBtn").onclick = () => { submitted = true; send("submit", conditions());
 $("upBtn").onclick = () => { if (topId) { send("react", { restaurantId: topId, up: true }); myReaction = "👍"; renderRound(); } };
 $("downBtn").onclick = () => { if (topId) { send("react", { restaurantId: topId, up: false }); myReaction = "👎"; renderRound(); } };
 $("vetoBtn").onclick = () => topId && send("veto", { restaurantId: topId, up: false });
+$("allergyRequestBtn").onclick = () => send("allergy-check", {});
+$("allergyOtherAdd").onclick = () => {
+  const t = $("allergyOtherText").value.trim();
+  if (t) { allergyOther.add(t.slice(0, 20)); $("allergyOtherText").value = ""; renderChips(); }
+};
 renderChips();
 </script>
 </body>

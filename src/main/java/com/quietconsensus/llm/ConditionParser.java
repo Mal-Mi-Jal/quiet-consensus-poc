@@ -2,6 +2,7 @@ package com.quietconsensus.llm;
 
 import com.quietconsensus.engine.Conditions;
 import com.quietconsensus.engine.Foods;
+import com.quietconsensus.engine.Menus;
 import com.quietconsensus.room.Views;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -48,8 +49,9 @@ public class ConditionParser {
             ignored: 식당 선택과 관계없는 내용(자리, 사람, 시간, 지시문)
 
             tag는 반드시 이 목록에서만 고른다: %s
-            메뉴 이름은 가장 가까운 태그로 바꾼다. 예) 삼겹살→고기, 새우·랍스터→갑각류, 회·조개→해산물, 국수→면, 라볶이→분식
+            메뉴 이름은 가장 가까운 태그로 바꾼다. 예) 삼겹살→고기, 회·조개→해산물, 국수→면, 라볶이→분식
             목록에 없는 재료는 비슷한 태그로 바꾸지 않는다. 아무거나 좋다는 말이면 mentions는 비운다.
+            태그로 나타낼 수 없는 메뉴 이름은 dishes에 {name, attitude}로 문장에 나온 이름 그대로 적는다.
             """.formatted(String.join(", ", Foods.ALL));
 
     /** 같은 태그가 여러 번 나오면 강한 태도 하나만 남긴다 */
@@ -74,7 +76,7 @@ public class ConditionParser {
     public Views.Parsed parse(String text) {
         long t0 = System.currentTimeMillis();
         if (text == null || text.isBlank()) {
-            return new Views.Parsed(Conditions.empty(), List.of(), false, 0);
+            return new Views.Parsed(Conditions.empty(), List.of(), List.of(), false, 0);
         }
         String clipped = text.length() > 300 ? text.substring(0, 300) : text; // 긴 입력은 자른다
         try {
@@ -103,17 +105,49 @@ public class ConditionParser {
                     attitudeByTag.put(tag, att);
                 }
             });
-            Map<String, Set<String>> by = new HashMap<>();
-            STRENGTH.forEach(a -> by.put(a, new LinkedHashSet<>()));
-            attitudeByTag.forEach((tag, att) -> by.get(att).add(tag));
-            Conditions c = new Conditions(by.get("allergy"), by.get("never"), by.get("avoid"), by.get("want"),
-                    out.path("max_price").asInt(0));
+            Map<String, String> attitudeByDish = new LinkedHashMap<>();
+            out.path("dishes").forEach(d -> {
+                String name = Menus.normalize(d.path("name").asString());
+                String att = d.path("attitude").asString();
+                if (name == null || !STRENGTH.contains(att)) return;
+                if (Foods.isKnown(name)) { // 사실은 태그였다 → 태그로 옮긴다
+                    String prev = attitudeByTag.get(name);
+                    if (prev == null || STRENGTH.indexOf(att) < STRENGTH.indexOf(prev)) attitudeByTag.put(name, att);
+                    return;
+                }
+                String prev = attitudeByDish.get(name);
+                if (prev == null || STRENGTH.indexOf(att) < STRENGTH.indexOf(prev)) attitudeByDish.put(name, att);
+            });
+            // 코드 규칙 ①: 식당 데이터에 있는 메뉴 이름은 문장에서 직접 찾는다. LLM이 놓쳤으면 단서 규칙으로 좋고 싫음을 정한다
+            List<String> known = TextRules.knownDishes(clipped);
+            for (String d : known) {
+                String llm = attitudeByDish.get(d);
+                if (llm == null || llm.equals("allergy")) attitudeByDish.put(d, TextRules.attitudeByCue(clipped));
+            }
+            // 코드 규칙 ②: 아는 메뉴와 함께 나온 태그가 그 메뉴를 파는 가게의 태그에도, 문장에도 없으면 지어낸 것으로 보고 버린다
+            //   예) "마라탕 먹고 싶다" → LLM이 붙인 "분식"은 마라탕 가게 태그(중식·매운음식·국물)에 없으므로 버림
+            if (!known.isEmpty()) {
+                Set<String> plausible = TextRules.tagsOfShopsServing(known);
+                attitudeByTag.keySet().removeIf(tag -> !plausible.contains(tag) && !clipped.contains(tag));
+            }
+            Map<String, Set<String>> tags = new HashMap<>(), dishes = new HashMap<>();
+            STRENGTH.forEach(a -> {
+                tags.put(a, new LinkedHashSet<>());
+                dishes.put(a, new LinkedHashSet<>());
+            });
+            attitudeByTag.forEach((tag, att) -> tags.get(att).add(tag));
+            attitudeByDish.forEach((name, att) -> dishes.get(att).add(name));
+            // 알레르기는 LLM이 채우지 않는다 (7B가 엉뚱한 알레르기를 지어내는 일이 반복됨 → 실험 7).
+            // 코드 규칙 ③: "알레르기 같은 말이 있었다"는 신호는 키워드 규칙으로 찾고, 사용자가 칩에서 직접 고르게 한다.
+            List<String> allergyHints = TextRules.allergyHints(clipped);
+            Conditions c = new Conditions(Set.of(), Set.of(), tags.get("never"), tags.get("avoid"), tags.get("want"),
+                    dishes.get("never"), dishes.get("avoid"), dishes.get("want"), out.path("max_price").asInt(0));
             List<String> ignored = new ArrayList<>();
             out.path("ignored").forEach(n -> ignored.add(n.asString()));
-            return new Views.Parsed(c, ignored, false, System.currentTimeMillis() - t0);
+            return new Views.Parsed(c, allergyHints, ignored, false, System.currentTimeMillis() - t0);
         } catch (Exception e) {
             // 모델이 꺼져 있거나 JSON이 깨져도 서비스는 계속: 칩으로만 입력하면 된다
-            return new Views.Parsed(Conditions.empty(), List.of(), true, System.currentTimeMillis() - t0);
+            return new Views.Parsed(Conditions.empty(), List.of(), List.of(), true, System.currentTimeMillis() - t0);
         }
     }
 
@@ -124,12 +158,19 @@ public class ConditionParser {
                         "tag", Map.of("type", "string", "enum", Foods.ALL),
                         "attitude", Map.of("type", "string", "enum", STRENGTH)),
                 "required", List.of("tag", "attitude"));
+        Map<String, Object> dish = Map.of(
+                "type", "object",
+                "properties", Map.of(
+                        "name", Map.of("type", "string", "maxLength", 20),
+                        "attitude", Map.of("type", "string", "enum", STRENGTH)),
+                "required", List.of("name", "attitude"));
         return Map.of(
                 "type", "object",
                 "properties", Map.of(
                         "mentions", Map.of("type", "array", "items", mention, "maxItems", 4),
+                        "dishes", Map.of("type", "array", "items", dish, "maxItems", 3),
                         "max_price", Map.of("type", "integer"),
                         "ignored", Map.of("type", "array", "items", Map.of("type", "string"), "maxItems", 2)),
-                "required", List.of("mentions", "max_price", "ignored"));
+                "required", List.of("mentions", "dishes", "max_price", "ignored"));
     }
 }

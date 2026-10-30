@@ -12,6 +12,7 @@ import java.util.TreeMap;
  *
  * 1) 필수 조건(알레르기, 절대 안 됨, 예산, 방의 거리 기준)을 어기는 식당은 탈락
  * 2) 남은 식당마다 사람별 만족도 = 지킨 희망 조건 수 / 전체 희망 조건 수
+ *    (태그는 식당 태그와, 메뉴 이름은 식당 메뉴와 비교 — Menus)
  * 3) "가장 덜 만족한 사람의 만족도"가 가장 높은 곳이 1등 (동점이면 평균, 그다음 id)
  * 4) 후보가 0개면 거리 → 예산 순으로 조금씩 완화하고, 그래도 없으면 conflict
  */
@@ -60,7 +61,21 @@ public final class Engine {
         if (r.walkMin() > walkLimit) return false;
         for (String t : c.allergy()) if (r.tags().contains(t)) return false;
         for (String t : c.mustNot()) if (r.tags().contains(t)) return false;
+        for (String d : c.dishNever()) if (Menus.serves(r, d)) return false;
+        // allergyOther(땅콩·우유…)는 식당 데이터로 알 수 없어서 거르지 않는다 → 확정 후 본인에게 확인 알림
         return c.maxPrice() == null || r.price() <= c.maxPrice() * (1 + priceSlack);
+    }
+
+    /** 후보 식당 중 어디서도 팔지 않는 메뉴 키워드 — 본인에게 "반영되지 않았어요"라고 알려 주기 위해 */
+    public static List<String> unmatchedDishes(Conditions c, List<Restaurant> pool) {
+        List<String> out = new ArrayList<>();
+        Set<String> all = new java.util.LinkedHashSet<>(c.dishNever());
+        all.addAll(c.dishAvoid());
+        all.addAll(c.dishWant());
+        for (String d : all) {
+            if (pool.stream().noneMatch(r -> Menus.serves(r, d))) out.add(d);
+        }
+        return out;
     }
 
     /** 희망 조건을 몇 개 지켰는지 [지킨 수, 전체 수]. 조건이 없으면 [0, 0] = 100%로 본다. */
@@ -73,6 +88,14 @@ public final class Engine {
         for (String t : c.want()) {
             total++;
             if (r.tags().contains(t)) ok++;
+        }
+        for (String d : c.dishAvoid()) {
+            total++;
+            if (!Menus.serves(r, d)) ok++;
+        }
+        for (String d : c.dishWant()) {
+            total++;
+            if (Menus.serves(r, d)) ok++;
         }
         if (disliked != null && !disliked.isEmpty()) {
             total++;

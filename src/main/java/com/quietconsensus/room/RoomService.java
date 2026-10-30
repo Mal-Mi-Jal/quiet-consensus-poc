@@ -223,7 +223,7 @@ public class RoomService {
                     }
                 }
                 case Room.Relax x -> {
-                    if (p.conditions.mustNot().contains(x.tag())) {
+                    if (p.conditions.relaxable().contains(x.tag())) {
                         p.conditions = p.conditions.relax(x.tag());
                         relaxed = changed = true;
                     }
@@ -341,13 +341,38 @@ public class RoomService {
             total = s[1];
         }
         if (room.result != null && room.result.conflict()) {
-            relaxable = List.copyOf(p.conditions.mustNot()); // 알레르기는 넣지 않는다
+            relaxable = List.copyOf(p.conditions.relaxable()); // 알레르기는 넣지 않는다
         }
-        return new Views.PrivateView(room.version, room.phase, p.conditions, ok, total, p.vetoLeft, relaxable, p.notice);
+        List<String> unmatched = Engine.unmatchedDishes(p.conditions, MockRestaurants.ALL);
+        return new Views.PrivateView(room.version, room.phase, p.conditions, ok, total, p.vetoLeft, relaxable, p.notice,
+                unmatched, allergyCheck(room, p), p.allergyRequested);
+    }
+
+    /** 확정 후, 식당 데이터로 거를 수 없는 알레르기(땅콩·우유…)가 있는 사람에게만 보여 줄 문구 */
+    private String allergyCheck(Room room, Room.Person p) {
+        if (room.phase != Views.Phase.DONE || p.conditions.allergyOther().isEmpty()
+                || room.result == null || room.result.top() == null) return null;
+        return "“" + room.result.top().restaurant().name() + "”에 " + String.join(", ", p.conditions.allergyOther())
+                + "이(가) 들어가는지 이 앱은 알 수 없어요. 주문 전에 직접 확인해 주세요";
+    }
+
+    /** 본인이 원할 때만: 공용 화면에 "확인이 필요한 알레르기가 있어요: 땅콩"을 이름 없이 띄운다 (알레르기는 민감한 건강 정보) */
+    public void requestAllergyCheck(String roomId, String key) {
+        Room room = rooms.get(roomId);
+        if (room == null) return;
+        withLock(room, () -> {
+            Room.Person p = room.people.get(key);
+            if (p == null || room.phase != Views.Phase.DONE || p.allergyRequested || p.conditions.allergyOther().isEmpty()) return;
+            p.allergyRequested = true;
+            room.log("참가자 중 확인이 필요한 알레르기가 있어요: " + String.join(", ", p.conditions.allergyOther()));
+            room.version++;
+            publishAll(room);
+        });
     }
 
     private Views.PrivateView privateNotice(Room room, String notice) {
-        return new Views.PrivateView(room.version, room.phase, Conditions.empty(), null, null, 0, List.of(), notice);
+        return new Views.PrivateView(room.version, room.phase, Conditions.empty(), null, null, 0, List.of(), notice,
+                List.of(), null, false);
     }
 
     private static Views.Place place(Restaurant r) {

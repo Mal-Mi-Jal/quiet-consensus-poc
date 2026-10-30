@@ -262,6 +262,34 @@ class RoomServiceTest {
     }
 
     @Test
+    void 거를_수_없는_알레르기는_확정_후_본인에게만_알리고_요청할_때만_공개한다() {
+        Capture cap = new Capture();
+        RoomService s = ready(cap, "r", 3);
+        var nut = new Conditions(Set.of(), Set.of("땅콩"), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), Set.of(), null);
+        s.submit("r", "p0", nut);
+        s.submit("r", "p1", Conditions.empty());
+        s.submit("r", "p2", Conditions.empty());
+        assertThat(cap.lastPrivate("p0").allergyCheck()).isNull(); // 확정 전에는 없음
+        s.finish("r");
+        assertThat(cap.lastPrivate("p0").allergyCheck()).contains("땅콩").contains("직접 확인");
+        assertThat(cap.lastPrivate("p1").allergyCheck()).isNull();    // 다른 사람에겐 안 보임
+        assertThat(cap.lastPublic().timeline()).noneMatch(l -> l.contains("땅콩")); // 공용 화면에도 아직 없음
+
+        s.requestAllergyCheck("r", "p0");
+        assertThat(cap.lastPublic().timeline()).anyMatch(l -> l.equals("참가자 중 확인이 필요한 알레르기가 있어요: 땅콩"));
+        assertThat(cap.lastPrivate("p0").allergyRequested()).isTrue();
+    }
+
+    @Test
+    void 후보_어디서도_안_파는_메뉴는_본인에게_알려준다() {
+        Capture cap = new Capture();
+        RoomService s = ready(cap, "r", 3);
+        s.submit("r", "p0", new Conditions(Set.of(), Set.of(), Set.of(), Set.of(), Set.of(),
+                Set.of(), Set.of(), Set.of("랍스터", "마라탕"), null));
+        assertThat(cap.lastPrivate("p0").unmatchedDishes()).containsExactly("랍스터");
+    }
+
+    @Test
     void 아홉번째_사람은_들어올_수_없다() {
         Capture cap = new Capture();
         RoomService s = ready(cap, "r", 8);

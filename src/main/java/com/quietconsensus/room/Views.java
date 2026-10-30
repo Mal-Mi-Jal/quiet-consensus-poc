@@ -23,13 +23,22 @@ public final class Views {
                              int round, long roundRemainingMs, int reactedCount) {
     }
 
+    /**
+     * unmatchedDishes: 내가 적은 메뉴 중 후보 어디서도 안 파는 것 (조용히 무시하지 않고 알려 준다)
+     * allergyCheck: 확정 후, 이 앱이 거를 수 없는 내 알레르기에 대한 "직접 확인하세요" 문구 (없으면 null)
+     * allergyRequested: 익명 확인 요청을 이미 보냈는지
+     */
     public record PrivateView(long version, Phase phase, Conditions myConditions,
                               Integer mySatisfied, Integer myTotal, int vetoLeft,
-                              List<String> relaxable, String notice) {
+                              List<String> relaxable, String notice,
+                              List<String> unmatchedDishes, String allergyCheck, boolean allergyRequested) {
     }
 
-    /** 평문 → 조건 변환 결과. 원문은 담지 않는다. */
-    public record Parsed(Conditions conditions, List<String> ignored, boolean invalid, long millis) {
+    /**
+     * 평문 → 조건 변환 결과. 원문은 담지 않는다.
+     * allergyHints: 알레르기 같은 말이 보였다는 신호. 조건에는 넣지 않고 "칩에서 직접 골라 주세요" 안내에만 쓴다
+     */
+    public record Parsed(Conditions conditions, List<String> allergyHints, List<String> ignored, boolean invalid, long millis) {
     }
 
     private Views() {

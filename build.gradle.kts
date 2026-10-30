@@ -32,5 +32,5 @@ tasks.withType<Test> {
     }
     // -Dollama=true 로 실행하면 LLM 평가 테스트가 켜진다
     systemProperty("ollama", System.getProperty("ollama", "false"))
-    systemProperty("evalSet", System.getProperty("evalSet", "both"))
+    systemProperty("evalSet", System.getProperty("evalSet", "all"))
 }
