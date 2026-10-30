@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quiet Consensus</title>
+<link rel="stylesheet" href="app.css">
+<script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <h1>오늘 점심 🍚</h1>
+  <div class="sub" id="status">연결 중…</div>
+  <div class="notice hidden" id="notice"></div>
+
+  <!-- ① 비밀 입력 -->
+  <section id="input">
+    <div class="card">
+      <h2>🔒 알레르기 (절대 완화되지 않아요)</h2>
+      <div class="chips" id="allergyChips"></div>
+      <p class="hint">목록에 없는 알레르기는 이 앱이 걸러 주지 못해요. 꼭 직접 확인하세요.</p>
+    </div>
+    <div class="card">
+      <h2>음식 취향 (눌러서 바꾸기)</h2>
+      <div class="legend"><span class="ok">● 먹고 싶음</span><span style="color:var(--avoid)">● 가능하면 피함</span><span style="color:var(--never)">● 절대 안 됨 (최대 2개)</span></div>
+      <div class="chips" id="foodChips" style="margin-top:10px"></div>
+      <div style="margin-top:12px">
+        <select id="price">
+          <option value="">예산 제한 없음</option>
+          <option value="8000">1인 8천 원 이하</option>
+          <option value="10000">1인 1만 원 이하</option>
+          <option value="12000">1인 1만 2천 원 이하</option>
+          <option value="15000">1인 1만 5천 원 이하</option>
+        </select>
+      </div>
+    </div>
+    <div class="card">
+      <h2>칩에 없는 건 말로 (선택)</h2>
+      <textarea id="text" maxlength="300" placeholder="예: 어제 짬뽕 먹어서 중식은 좀…"></textarea>
+      <button class="sec" id="parseBtn" style="margin-top:8px">AI에게 정리 부탁</button>
+      <div class="parsed hidden" id="parsed" style="margin-top:10px"></div>
+      <p class="hint">원문은 저장하지 않고, 정리된 결과만 위 칩에 더해져요. 맞는지 꼭 확인하세요.</p>
+    </div>
+    <button class="main" id="submitBtn">비밀로 제출</button>
+  </section>
+
+  <!-- ② 조율 -->
+  <section id="negotiate" class="hidden">
+    <div class="card">
+      <div class="sub" style="margin:0">지금 1순위</div>
+      <div class="top-name" id="topName">-</div>
+      <div class="tags" id="topTags"></div>
+      <p id="mySat" style="margin:10px 0 0"></p>
+    </div>
+    <div class="row">
+      <button class="sec" id="upBtn">👍 좋아요</button>
+      <button class="sec" id="downBtn">👎 별로</button>
+      <button class="sec" id="vetoBtn">🚫 거부권</button>
+    </div>
+    <div class="card hidden" id="relaxCard" style="margin-top:14px">
+      <h2>맞는 곳이 없어요</h2>
+      <p class="hint">내 '절대 안 됨' 중 하나를 '가능하면 피함'으로 바꿔 줄 수 있나요? 누가 바꿨는지는 아무도 몰라요.</p>
+      <div class="chips" id="relaxChips" style="margin-top:8px"></div>
+    </div>
+    <p class="hint">반응은 몇 초씩 모아서 반영돼요. 누가 눌렀는지 티 나지 않게 하려고요.</p>
+  </section>
+
+  <section id="done" class="hidden">
+    <div class="card"><div class="sub" style="margin:0">확정!</div><div class="top-name" id="doneName"></div></div>
+  </section>
+</div>
+
+<script>
+const FOODS = ["한식","중식","일식","양식","분식","아시안","고기","해산물","갑각류","매운음식","국물","면","튀김","밥"];
+const STATES = ["", "want", "avoid", "never"];
+const room = new URLSearchParams(location.search).get("room") || "lunch";
+const state = Object.fromEntries(FOODS.map(f => [f, ""]));
+const allergy = new Set();
+let lastVersion = -1, topId = null, phase = "INPUT";
+const $ = id => document.getElementById(id);
+
+function chip(label, cls, onClick) {
+  const b = document.createElement("button");
+  b.className = "chip " + cls; b.textContent = label; b.onclick = onClick; return b;
+}
+function renderChips() {
+  const a = $("allergyChips"); a.replaceChildren();
+  ["갑각류","해산물"].forEach(f => a.appendChild(chip(f, allergy.has(f) ? "allergy" : "", () => {
+    allergy.has(f) ? allergy.delete(f) : allergy.add(f); renderChips(); })));
+  const c = $("foodChips"); c.replaceChildren();
+  FOODS.forEach(f => c.appendChild(chip(f, state[f], () => {
+    let next = STATES[(STATES.indexOf(state[f]) + 1) % STATES.length];
+    const nevers = FOODS.filter(x => state[x] === "never").length;
+    if (next === "never" && nevers >= 2) next = ""; // 절대 안 됨은 최대 2개
+    state[f] = next; renderChips(); })));
+}
+function conditions() {
+  const pick = s => FOODS.filter(f => state[f] === s);
+  const p = $("price").value;
+  return { allergy: [...allergy], mustNot: pick("never"), preferNot: pick("avoid"), want: pick("want"), maxPrice: p ? Number(p) : null };
+}
+function notice(msg) {
+  const n = $("notice");
+  if (!msg) return;
+  n.textContent = msg; n.classList.remove("hidden");
+  clearTimeout(notice.t); notice.t = setTimeout(() => n.classList.add("hidden"), 5000);
+}
+
+const client = new StompJs.Client({ brokerURL: (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws", reconnectDelay: 2000 });
+client.onConnect = () => {
+  client.subscribe("/topic/room/" + room, m => onPublic(JSON.parse(m.body)));
+  client.subscribe("/user/queue/me", m => onPrivate(JSON.parse(m.body)));
+  client.subscribe("/user/queue/parsed", m => onParsed(JSON.parse(m.body)));
+  send("join", {});
+};
+client.activate();
+function send(what, body) { client.publish({ destination: `/app/room/${room}/${what}`, body: JSON.stringify(body) }); }
+
+function onPublic(v) {
+  if (v.version < lastVersion) return; // 늦게 도착한 옛 버전은 무시
+  lastVersion = v.version; phase = v.phase;
+  $("status").textContent = v.phase === "INPUT" ? `참가 ${v.joined}명 · 제출 ${v.submitted}명` : `참가 ${v.joined}명 · 후보 ${v.remaining}곳`;
+  $("input").classList.toggle("hidden", v.phase !== "INPUT" || submitted);
+  $("negotiate").classList.toggle("hidden", v.phase !== "NEGOTIATE");
+  $("done").classList.toggle("hidden", v.phase !== "DONE");
+  if (v.phase === "INPUT" && submitted) $("status").textContent += " — 다른 사람을 기다리는 중";
+  if (v.top) {
+    topId = v.top.id;
+    $("topName").textContent = v.top.name; $("doneName").textContent = v.top.name;
+    $("topTags").textContent = `${v.top.tags.join(" · ")} · ${v.top.price.toLocaleString()}원 · 도보 ${v.top.walkMin}분`;
+  } else { topId = null; $("topName").textContent = "맞는 곳이 없어요"; $("topTags").textContent = ""; }
+  if (v.notice) notice(v.notice);
+}
+function onPrivate(p) {
+  if (p.notice) notice(p.notice);
+  $("mySat").textContent = p.myTotal == null ? "" :
+    p.myTotal === 0 ? "내 조건: 없음 (어디든 OK)" : `내 조건 ${p.myTotal}개 중 ${p.mySatisfied}개 반영 (나만 보여요)`;
+  $("vetoBtn").textContent = `🚫 거부권 (${p.vetoLeft})`; $("vetoBtn").disabled = p.vetoLeft === 0;
+  $("relaxCard").classList.toggle("hidden", p.relaxable.length === 0);
+  const r = $("relaxChips"); r.replaceChildren();
+  p.relaxable.forEach(t => r.appendChild(chip(t + " 풀기", "never", () => send("relax", { tag: t }))));
+}
+function onParsed(r) {
+  const box = $("parsed"); box.classList.remove("hidden"); box.replaceChildren();
+  const line = (label, arr) => { if (arr.length) { const d = document.createElement("div"); d.textContent = label + arr.join(", "); box.appendChild(d); } };
+  if (r.invalid) { line("⚠️ ", ["정리에 실패했어요. 칩으로 입력해 주세요"]); return; }
+  const c = r.conditions;
+  line("🔒 알레르기: ", c.allergy); line("🚫 절대 안 됨: ", c.mustNot); line("🙅 가능하면 피함: ", c.preferNot); line("😋 먹고 싶음: ", c.want);
+  if (c.maxPrice) line("💸 예산: ", [c.maxPrice.toLocaleString() + "원 이하"]);
+  if (!box.childNodes.length) line("", ["음식 조건은 없었어요" + (r.ignored.length ? " (식당과 관계없는 내용은 반영하지 않아요)" : "")]);
+  const ok = document.createElement("button"); ok.className = "sec"; ok.textContent = "맞아요, 칩에 더하기"; ok.style.marginTop = "8px";
+  ok.onclick = () => {
+    c.allergy.forEach(f => { if (["갑각류","해산물"].includes(f)) allergy.add(f); });
+    c.want.forEach(f => state[f] = "want"); c.preferNot.forEach(f => state[f] = "avoid");
+    c.mustNot.forEach(f => { if (FOODS.filter(x => state[x] === "never").length < 2) state[f] = "never"; else state[f] = "avoid"; });
+    if (c.maxPrice) $("price").value = [8000,10000,12000,15000].find(v => v >= c.maxPrice) || "";
+    $("text").value = ""; box.classList.add("hidden"); renderChips();
+  };
+  box.appendChild(ok);
+}
+
+let submitted = false;
+$("parseBtn").onclick = () => { const t = $("text").value.trim(); if (t) { send("parse", { text: t }); $("parsed").classList.remove("hidden"); $("parsed").textContent = "정리 중…"; } };
+$("submitBtn").onclick = () => { submitted = true; send("submit", conditions()); $("input").classList.add("hidden"); $("status").textContent += " — 제출 완료, 다른 사람을 기다리는 중"; };
+$("upBtn").onclick = () => topId && send("react", { restaurantId: topId, up: true });
+$("downBtn").onclick = () => topId && send("react", { restaurantId: topId, up: false });
+$("vetoBtn").onclick = () => topId && send("veto", { restaurantId: topId, up: false });
+renderChips();
+</script>
+</body>
+</html>

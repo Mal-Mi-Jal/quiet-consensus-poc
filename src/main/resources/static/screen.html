@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quiet Consensus · 공용 화면</title>
+<link rel="stylesheet" href="app.css">
+<script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
+<style>
+  .wrap { max-width: 980px; }
+  .big { font-size: 52px; font-weight: 800; margin: 6px 0 4px; }
+  .grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } .big { font-size: 36px; } }
+  .stat { font-size: 20px; margin-top: 10px; }
+  #timeline div { padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 15px; }
+  .phase { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--text); color: #fff; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📺 공용 화면 <span class="phase" id="phase">-</span></h1>
+  <div class="sub" id="joinUrl"></div>
+  <div class="notice hidden" id="notice"></div>
+  <div class="grid">
+    <div class="card">
+      <div class="sub" style="margin:0" id="counts">-</div>
+      <div class="big" id="top">아직 비밀 입력 중…</div>
+      <div class="tags" id="tags"></div>
+      <div class="stat" id="minSat"></div>
+      <div class="stat" id="likes"></div>
+      <p class="hint" id="next"></p>
+      <div class="row" style="margin-top:12px">
+        <button class="sec" id="startBtn">입력 마감하고 시작</button>
+        <button class="sec" id="finishBtn">시간 종료 · 확정</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>AI 판단 타임라인 (이름 없이)</h2>
+      <div id="timeline"></div>
+    </div>
+  </div>
+</div>
+<script>
+const room = new URLSearchParams(location.search).get("room") || "lunch";
+const $ = id => document.getElementById(id);
+$("joinUrl").textContent = `폰으로 접속: ${location.origin}/?room=${room}`;
+let lastVersion = -1;
+const client = new StompJs.Client({ brokerURL: (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws", reconnectDelay: 2000 });
+client.onConnect = () => client.subscribe("/topic/room/" + room, m => render(JSON.parse(m.body)));
+client.activate();
+const send = what => client.publish({ destination: `/app/room/${room}/${what}`, body: "{}" });
+$("startBtn").onclick = () => send("start");
+$("finishBtn").onclick = () => send("finish");
+
+function render(v) {
+  if (v.version < lastVersion) return;
+  lastVersion = v.version;
+  $("phase").textContent = { INPUT: "① 비밀 입력", NEGOTIATE: "② 조율 중", DONE: "③ 확정" }[v.phase];
+  $("counts").textContent = v.phase === "INPUT" ? `참가 ${v.joined}명 · 제출 ${v.submitted}명` : `참가 ${v.joined}명 · 남은 후보 ${v.remaining}곳 · v${v.version}`;
+  if (v.phase === "INPUT") { $("top").textContent = "아직 비밀 입력 중…"; $("tags").textContent = ""; $("minSat").textContent = ""; $("likes").textContent = ""; $("next").textContent = ""; }
+  else if (v.top) {
+    $("top").textContent = (v.phase === "DONE" ? "✅ " : "") + v.top.name;
+    $("tags").textContent = `${v.top.tags.join(" · ")} · ${v.top.price.toLocaleString()}원 · 도보 ${v.top.walkMin}분`;
+    $("minSat").textContent = `가장 덜 만족한 사람도 ${v.minSatisfactionPercent}%`;
+    $("likes").textContent = `👍 ${v.likesOnTop} / ${v.joined}`;
+    $("next").textContent = v.nextUp.length ? "다음 후보: " + v.nextUp.map(p => p.name).join(", ") : "";
+  } else { $("top").textContent = "맞는 곳이 없어요"; $("tags").textContent = ""; $("minSat").textContent = ""; }
+  const t = $("timeline"); t.replaceChildren();
+  v.timeline.forEach(line => { const d = document.createElement("div"); d.textContent = line; t.appendChild(d); });
+  const n = $("notice"); n.classList.toggle("hidden", !v.notice); n.textContent = v.notice || "";
+  $("startBtn").disabled = v.phase !== "INPUT"; $("finishBtn").disabled = v.phase !== "NEGOTIATE";
+}
+</script>
+</body>
+</html>

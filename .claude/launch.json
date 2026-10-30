@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "quiet-consensus",
+      "runtimeExecutable": "D:\\Claude\\quiet-consensus-poc\\gradlew.bat",
+      "runtimeArgs": ["-p", "D:\\Claude\\quiet-consensus-poc", "bootRun", "-q"],
+      "port": 8080
+    }
+  ]
+}

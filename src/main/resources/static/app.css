@@ -1,0 +1,34 @@
+:root {
+  --bg: #f7f5f0; --card: #fff; --text: #1d1f1c; --muted: #6b6e67; --line: #e2dfd6;
+  --want: #3f8a57; --avoid: #c27a2c; --never: #c0503e; --allergy: #7d62b0; --accent: #5b7bb3;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); word-break: keep-all;
+  font-family: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+.wrap { max-width: 520px; margin: 0 auto; padding: 18px 16px 60px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.sub { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+.card h2 { font-size: 16px; margin: 0 0 10px; }
+.hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { border: 1.5px solid var(--line); background: #fff; border-radius: 999px; padding: 7px 12px; font-size: 14px; cursor: pointer; }
+.chip.want { border-color: var(--want); background: #e9f5ec; color: var(--want); font-weight: 700; }
+.chip.avoid { border-color: var(--avoid); background: #fbf0e3; color: var(--avoid); font-weight: 700; }
+.chip.never { border-color: var(--never); background: #fbe9e6; color: var(--never); font-weight: 700; }
+.chip.allergy { border-color: var(--allergy); background: #f0ebf8; color: var(--allergy); font-weight: 700; }
+.legend span { font-size: 12px; margin-right: 10px; }
+textarea, select { width: 100%; font: inherit; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+textarea { min-height: 64px; resize: vertical; }
+button.main { width: 100%; padding: 13px; font: inherit; font-weight: 700; border: 0; border-radius: 12px;
+  background: var(--text); color: #fff; cursor: pointer; margin-top: 10px; }
+button.sec { padding: 9px 12px; font: inherit; border: 1px solid var(--line); border-radius: 10px; background: #fff; cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+.row { display: flex; gap: 8px; }
+.row > * { flex: 1; }
+.top-name { font-size: 26px; font-weight: 800; margin: 2px 0 6px; }
+.tags { color: var(--muted); font-size: 14px; }
+.notice { background: #fff6f4; border: 1px solid #e8c9c4; color: #8a3a2c; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 14px; }
+.ok { color: var(--want); font-weight: 700; }
+.hidden { display: none; }
+.parsed div { font-size: 14px; margin: 3px 0; }
