@@ -31,4 +31,6 @@ button:disabled { opacity: .45; cursor: default; }
 .notice { background: #fff6f4; border: 1px solid #e8c9c4; color: #8a3a2c; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 14px; }
 .ok { color: var(--want); font-weight: 700; }
 .hidden { display: none; }
+.round { background: var(--text); color: #fff; border-radius: 12px; padding: 10px 14px; font-weight: 700; margin-bottom: 12px; font-variant-numeric: tabular-nums; }
+.round:empty { display: none; }
 .parsed div { font-size: 14px; margin: 3px 0; }

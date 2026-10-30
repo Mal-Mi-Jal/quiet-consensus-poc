@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** 진짜 WebSocket 연결 3개로, 개인 정보가 본인 연결로만 가는지 확인한다. */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "qc.batch-ms=0")
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "qc.round-ms=0")
 class StompPrivacyTest {
 
     @Value("${local.server.port}")

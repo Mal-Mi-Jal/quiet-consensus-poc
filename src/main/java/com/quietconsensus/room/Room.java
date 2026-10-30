@@ -48,7 +48,7 @@ final class Room {
     final String id;
     final ReentrantLock lock = new ReentrantLock();
     final Map<String, Person> people = new LinkedHashMap<>();
-    /** 조율 단계 이벤트는 바로 반영하지 않고 여기 모았다가 flush 때 도착 순서대로 처리한다 */
+    /** 조율 단계 이벤트는 바로 반영하지 않고 여기 모았다가 라운드가 끝날 때 도착 순서대로 처리한다 */
     final Queue<Event> pending = new ConcurrentLinkedQueue<>();
     final Set<Integer> vetoed = new HashSet<>();
     final Map<String, Set<Integer>> dislikes = new HashMap<>();
@@ -58,6 +58,10 @@ final class Room {
     Views.Phase phase = Views.Phase.INPUT;
     long version;
     Engine.Result result;
+    /** 조율 단계 라운드: 이 라운드에 반응한 사람과 라운드가 끝나는 시각 (0이면 타이머 없음) */
+    int round;
+    long roundEndsAt;
+    final Set<String> reacted = new HashSet<>();
 
     Room(String id) {
         this.id = id;

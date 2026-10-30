@@ -46,6 +46,7 @@
 
   <!-- ② 조율 -->
   <section id="negotiate" class="hidden">
+    <div class="round" id="roundBar"></div>
     <div class="card">
       <div class="sub" style="margin:0">지금 1순위</div>
       <div class="top-name" id="topName">-</div>
@@ -62,7 +63,8 @@
       <p class="hint">내 '절대 안 됨' 중 하나를 '가능하면 피함'으로 바꿔 줄 수 있나요? 누가 바꿨는지는 아무도 몰라요.</p>
       <div class="chips" id="relaxChips" style="margin-top:8px"></div>
     </div>
-    <p class="hint">반응은 몇 초씩 모아서 반영돼요. 누가 눌렀는지 티 나지 않게 하려고요.</p>
+    <p class="hint" id="myReaction"></p>
+    <p class="hint">반응은 라운드가 끝날 때 한꺼번에 반영돼요. 그 전엔 마음을 바꿔도 돼요. 거부권은 바로 반영되고 새 라운드가 시작돼요.</p>
   </section>
 
   <section id="done" class="hidden">
@@ -77,7 +79,17 @@ const room = new URLSearchParams(location.search).get("room") || "lunch";
 const state = Object.fromEntries(FOODS.map(f => [f, ""]));
 const allergy = new Set();
 let lastVersion = -1, topId = null, phase = "INPUT";
+let round = 0, roundDeadline = 0, reacted = 0, joined = 0, myReaction = null;
 const $ = id => document.getElementById(id);
+
+// 라운드 남은 시간: 서버가 보낸 "남은 ms"를 받은 순간부터 폰에서 거꾸로 센다 (폰 시계가 달라도 괜찮음)
+function renderRound() {
+  if (phase !== "NEGOTIATE") { $("roundBar").textContent = ""; return; }
+  const left = Math.max(0, Math.ceil((roundDeadline - Date.now()) / 1000));
+  $("roundBar").textContent = `라운드 ${round} · ⏱ ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} · 반응 ${reacted}/${joined}`;
+  $("myReaction").textContent = myReaction ? `이번 라운드 내 반응: ${myReaction} (라운드가 끝나기 전엔 바꿀 수 있어요)` : "아직 반응하지 않았어요";
+}
+setInterval(renderRound, 250);
 
 function chip(label, cls, onClick) {
   const b = document.createElement("button");
@@ -119,6 +131,10 @@ function send(what, body) { client.publish({ destination: `/app/room/${room}/${w
 function onPublic(v) {
   if (v.version < lastVersion) return; // 늦게 도착한 옛 버전은 무시
   lastVersion = v.version; phase = v.phase;
+  if (v.round !== round) myReaction = null; // 새 라운드 → 내 반응 초기화
+  round = v.round; reacted = v.reactedCount; joined = v.joined;
+  roundDeadline = Date.now() + v.roundRemainingMs;
+  renderRound();
   $("status").textContent = v.phase === "INPUT" ? `참가 ${v.joined}명 · 제출 ${v.submitted}명` : `참가 ${v.joined}명 · 후보 ${v.remaining}곳`;
   $("input").classList.toggle("hidden", v.phase !== "INPUT" || submitted);
   $("negotiate").classList.toggle("hidden", v.phase !== "NEGOTIATE");
@@ -162,8 +178,8 @@ function onParsed(r) {
 let submitted = false;
 $("parseBtn").onclick = () => { const t = $("text").value.trim(); if (t) { send("parse", { text: t }); $("parsed").classList.remove("hidden"); $("parsed").textContent = "정리 중…"; } };
 $("submitBtn").onclick = () => { submitted = true; send("submit", conditions()); $("input").classList.add("hidden"); $("status").textContent += " — 제출 완료, 다른 사람을 기다리는 중"; };
-$("upBtn").onclick = () => topId && send("react", { restaurantId: topId, up: true });
-$("downBtn").onclick = () => topId && send("react", { restaurantId: topId, up: false });
+$("upBtn").onclick = () => { if (topId) { send("react", { restaurantId: topId, up: true }); myReaction = "👍"; renderRound(); } };
+$("downBtn").onclick = () => { if (topId) { send("react", { restaurantId: topId, up: false }); myReaction = "👎"; renderRound(); } };
 $("vetoBtn").onclick = () => topId && send("veto", { restaurantId: topId, up: false });
 renderChips();
 </script>

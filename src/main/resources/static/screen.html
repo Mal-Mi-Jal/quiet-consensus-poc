@@ -13,6 +13,7 @@
   @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } .big { font-size: 36px; } }
   .stat { font-size: 20px; margin-top: 10px; }
   #timeline div { padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 15px; }
+  .round { font-size: 22px; padding: 12px 18px; }
   .phase { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--text); color: #fff; font-size: 13px; }
 </style>
 </head>
@@ -23,6 +24,7 @@
   <div class="notice hidden" id="notice"></div>
   <div class="grid">
     <div class="card">
+      <div class="round" id="roundBar"></div>
       <div class="sub" style="margin:0" id="counts">-</div>
       <div class="big" id="top">아직 비밀 입력 중…</div>
       <div class="tags" id="tags"></div>
@@ -44,7 +46,13 @@
 const room = new URLSearchParams(location.search).get("room") || "lunch";
 const $ = id => document.getElementById(id);
 $("joinUrl").textContent = `폰으로 접속: ${location.origin}/?room=${room}`;
-let lastVersion = -1;
+let lastVersion = -1, phase = "INPUT", round = 0, roundDeadline = 0, reacted = 0, joined = 0;
+function renderRound() {
+  if (phase !== "NEGOTIATE") { $("roundBar").textContent = ""; return; }
+  const left = Math.max(0, Math.ceil((roundDeadline - Date.now()) / 1000));
+  $("roundBar").textContent = `라운드 ${round}  ·  ⏱ ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}  ·  반응 ${reacted} / ${joined}`;
+}
+setInterval(renderRound, 250);
 const client = new StompJs.Client({ brokerURL: (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws", reconnectDelay: 2000 });
 client.onConnect = () => client.subscribe("/topic/room/" + room, m => render(JSON.parse(m.body)));
 client.activate();
@@ -55,6 +63,9 @@ $("finishBtn").onclick = () => send("finish");
 function render(v) {
   if (v.version < lastVersion) return;
   lastVersion = v.version;
+  phase = v.phase; round = v.round; reacted = v.reactedCount; joined = v.joined;
+  roundDeadline = Date.now() + v.roundRemainingMs;
+  renderRound();
   $("phase").textContent = { INPUT: "① 비밀 입력", NEGOTIATE: "② 조율 중", DONE: "③ 확정" }[v.phase];
   $("counts").textContent = v.phase === "INPUT" ? `참가 ${v.joined}명 · 제출 ${v.submitted}명` : `참가 ${v.joined}명 · 남은 후보 ${v.remaining}곳 · v${v.version}`;
   if (v.phase === "INPUT") { $("top").textContent = "아직 비밀 입력 중…"; $("tags").textContent = ""; $("minSat").textContent = ""; $("likes").textContent = ""; $("next").textContent = ""; }

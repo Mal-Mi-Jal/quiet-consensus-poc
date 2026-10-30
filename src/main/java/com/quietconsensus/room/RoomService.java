@@ -25,7 +25,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * 방 관리. 핵심 규칙:
  * - 방마다 lock 하나로 한 줄 서기 (동시에 눌러도 한 번에 하나씩 처리)
- * - 조율 단계 이벤트는 큐에 모았다가 batchMs마다 한 번에 반영 → 누가 누른 순간 바뀌었는지 티가 안 남
+ * - 조율은 라운드제: 라운드 동안 반응을 모아 두었다가, 라운드가 끝날 때 한 번에 반영한다
+ *   → 반응할 틈이 보장되고, 누가 누른 순간 바뀌었는지 티가 나지 않는다
+ * - 라운드는 시간이 다 되거나, 전원이 반응하거나, 누군가 거부권을 쓰면 끝난다
  * - 반영할 때마다 "현재 전체 상태"로 처음부터 다시 계산하고 version을 1 올려 방송
  */
 @Service
@@ -36,19 +38,22 @@ public class RoomService {
 
     private final Map<String, Room> rooms = new ConcurrentHashMap<>();
     private final Publisher publisher;
+    private final long roundMs;
     private final ScheduledExecutorService scheduler;
 
-    public RoomService(Publisher publisher, @Value("${qc.batch-ms:3000}") long batchMs) {
+    public RoomService(Publisher publisher, @Value("${qc.round-ms:30000}") long roundMs) {
         this.publisher = publisher;
-        if (batchMs > 0) {
+        this.roundMs = roundMs;
+        if (roundMs > 0) {
             scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "room-flush");
+                Thread t = new Thread(r, "round-timer");
                 t.setDaemon(true);
                 return t;
             });
-            scheduler.scheduleAtFixedRate(this::flushAll, batchMs, batchMs, TimeUnit.MILLISECONDS);
+            long tick = Math.min(250, roundMs);
+            scheduler.scheduleAtFixedRate(this::tick, tick, tick, TimeUnit.MILLISECONDS);
         } else {
-            scheduler = null; // 테스트에서는 flush를 직접 부른다
+            scheduler = null; // 테스트에서는 closeRound를 직접 부른다
         }
     }
 
@@ -72,7 +77,7 @@ public class RoomService {
             if (room.phase != Views.Phase.INPUT && room.result != null && room.result.top() != null) {
                 // 넘겨받기: 늦게 온 사람에게 지금 상황만 요약해 준다
                 p.notice = "지금 1순위는 " + room.result.top().restaurant().name()
-                        + " (가장 덜 만족한 사람도 " + percent(room.result.top().min()) + "%). 조건을 내면 다음 반영 때 같이 계산돼요";
+                        + " (가장 덜 만족한 사람도 " + percent(room.result.top().min()) + "%). 조건을 내면 이번 라운드가 끝날 때 같이 계산돼요";
             }
             room.version++;
             publishAll(room);
@@ -82,13 +87,14 @@ public class RoomService {
     public void submit(String roomId, String key, Conditions conditions) {
         Room room = rooms.get(roomId);
         if (room == null) return;
-        if (room.phase == Views.Phase.NEGOTIATE) {
-            room.pending.add(new Room.Submit(key, conditions));
-            return;
-        }
         withLock(room, () -> {
             Room.Person p = room.people.get(key);
-            if (p == null || room.phase != Views.Phase.INPUT) return;
+            if (p == null) return;
+            if (room.phase == Views.Phase.NEGOTIATE) {
+                room.pending.add(new Room.Submit(key, conditions)); // 조율 중 조건 변경은 라운드 끝에 반영
+                return;
+            }
+            if (room.phase != Views.Phase.INPUT) return;
             p.conditions = conditions;
             p.submitted = true;
             room.version++;
@@ -112,101 +118,135 @@ public class RoomService {
         });
     }
 
-    // ---------------------------------------------------------------- 조율 단계 (큐에 쌓기만 한다)
+    // ---------------------------------------------------------------- 조율 단계 (라운드)
 
+    /** 👍/👎 — 라운드 끝까지 모아 둔다. 라운드 안에서는 마음을 바꿔도 마지막 반응만 남는다. 전원이 반응하면 바로 라운드를 닫는다. */
     public void react(String roomId, String key, int restaurantId, boolean up) {
-        enqueue(roomId, new Room.React(key, restaurantId, up));
-    }
-
-    public void veto(String roomId, String key, int restaurantId) {
-        enqueue(roomId, new Room.Veto(key, restaurantId));
-    }
-
-    public void relax(String roomId, String key, String tag) {
-        enqueue(roomId, new Room.Relax(key, tag));
-    }
-
-    private void enqueue(String roomId, Room.Event e) {
         Room room = rooms.get(roomId);
-        if (room != null && room.phase == Views.Phase.NEGOTIATE) room.pending.add(e);
-    }
-
-    public void flushAll() {
-        for (Room room : rooms.values()) flush(room.id);
-    }
-
-    /** 모아 둔 이벤트를 도착 순서대로 반영하고, 바뀐 게 있으면 한 번만 다시 계산해서 방송한다 */
-    public void flush(String roomId) {
-        Room room = rooms.get(roomId);
-        if (room == null || room.pending.isEmpty()) return;
+        if (room == null) return;
         withLock(room, () -> {
-            if (room.phase != Views.Phase.NEGOTIATE) {
-                room.pending.clear();
-                return;
+            if (room.phase != Views.Phase.NEGOTIATE || !room.people.containsKey(key)) return;
+            room.pending.add(new Room.React(key, restaurantId, up));
+            room.reacted.add(key);
+            if (room.reacted.size() >= room.people.size()) {
+                closeRoundLocked(room);
+            } else {
+                room.version++;
+                publisher.toRoom(room.id, publicView(room)); // "반응 3/4" 숫자만 갱신 (누가, 무엇을 눌렀는지는 없음)
             }
-            String oldTop = topName(room);
-            boolean changed = false;
-            boolean newConditions = false, reactions = false, relaxed = false;
-            List<String> vetoLines = new ArrayList<>();
-            Room.Event e;
-            while ((e = room.pending.poll()) != null) {
-                Room.Person p = room.people.get(e.key());
-                if (p == null) continue;
-                switch (e) {
-                    case Room.Submit s -> {
-                        p.conditions = s.conditions();
-                        p.submitted = true;
-                        newConditions = changed = true;
-                    }
-                    case Room.React r -> {
-                        Set<Integer> dis = room.dislikes.computeIfAbsent(p.key, k -> new HashSet<>());
-                        if (r.up()) {
-                            room.likes.put(p.key, r.restaurantId());
-                            dis.remove(r.restaurantId());
-                        } else {
-                            dis.add(r.restaurantId());
-                            room.likes.remove(p.key, r.restaurantId());
-                        }
-                        reactions = changed = true;
-                    }
-                    case Room.Veto v -> {
-                        Restaurant target = MockRestaurants.byId(v.restaurantId());
-                        if (p.vetoLeft == 0) {
-                            p.notice = "거부권은 이미 썼어요";
-                        } else if (target == null || room.vetoed.contains(v.restaurantId()) || !inRanking(room, v.restaurantId())) {
-                            // 동시에 같은 후보에 거부권이 들어오면 두 번째 사람 것은 돌려준다
-                            p.notice = "이미 빠진 후보라 거부권을 돌려드렸어요";
-                        } else {
-                            room.vetoed.add(v.restaurantId());
-                            p.vetoLeft--;
-                            p.notice = "거부권을 썼어요: " + target.name() + " 제외";
-                            vetoLines.add("누군가 거부권을 썼어요 🚫 → " + target.name() + " 제외");
-                            changed = true;
-                        }
-                    }
-                    case Room.Relax x -> {
-                        if (p.conditions.mustNot().contains(x.tag())) {
-                            p.conditions = p.conditions.relax(x.tag());
-                            relaxed = changed = true;
-                        }
-                    }
-                }
-            }
-            room.version++; // 개인 알림만 바뀌어도 새 버전으로 보낸다
-            if (changed) {
-                recompute(room);
-                if (newConditions) room.log("새 조건이 반영됐어요");
-                if (reactions) room.log("반응이 반영됐어요");
-                if (relaxed) room.log("누군가 '절대 안 됨' 하나를 풀어 줬어요");
-                vetoLines.forEach(room::log);
-                String newTop = topName(room);
-                if (!Objects.equals(oldTop, newTop) && newTop != null) {
-                    room.log("1순위: " + (oldTop == null ? "없음" : oldTop) + " → " + newTop);
-                }
-                checkDone(room);
-            }
-            publishAll(room);
         });
+    }
+
+    /** 거부권은 기다리지 않는다: 이번 라운드를 바로 닫으면서 함께 반영한다 */
+    public void veto(String roomId, String key, int restaurantId) {
+        closeWith(roomId, new Room.Veto(key, restaurantId));
+    }
+
+    /** 후보가 0개일 때 "절대 안 됨" 풀기 — 기다릴 이유가 없으니 바로 반영 */
+    public void relax(String roomId, String key, String tag) {
+        closeWith(roomId, new Room.Relax(key, tag));
+    }
+
+    private void closeWith(String roomId, Room.Event e) {
+        Room room = rooms.get(roomId);
+        if (room == null) return;
+        withLock(room, () -> {
+            if (room.phase != Views.Phase.NEGOTIATE || !room.people.containsKey(e.key())) return;
+            room.pending.add(e);
+            closeRoundLocked(room);
+        });
+    }
+
+    /** 타이머: 시간이 다 된 라운드를 닫는다. 마감 시각은 lock 안에서 다시 확인한다
+     *  (밖에서만 보면, 그 사이 거부권으로 새로 열린 라운드를 바로 닫아 버릴 수 있다) */
+    void tick() {
+        for (Room room : rooms.values()) {
+            if (room.phase != Views.Phase.NEGOTIATE || room.roundEndsAt == 0) continue;
+            withLock(room, () -> {
+                if (room.phase == Views.Phase.NEGOTIATE && room.roundEndsAt > 0
+                        && System.currentTimeMillis() >= room.roundEndsAt) {
+                    closeRoundLocked(room);
+                }
+            });
+        }
+    }
+
+    public void closeRound(String roomId) {
+        Room room = rooms.get(roomId);
+        if (room == null) return;
+        withLock(room, () -> {
+            if (room.phase == Views.Phase.NEGOTIATE) closeRoundLocked(room);
+        });
+    }
+
+    /** 모아 둔 이벤트를 도착 순서대로 반영하고, 한 번만 다시 계산해서 방송한 뒤 다음 라운드를 연다 */
+    private void closeRoundLocked(Room room) {
+        String oldTop = topName(room);
+        int closing = room.round;
+        boolean changed = false;
+        boolean newConditions = false, reactions = false, relaxed = false;
+        List<String> vetoLines = new ArrayList<>();
+        Room.Event e;
+        while ((e = room.pending.poll()) != null) {
+            Room.Person p = room.people.get(e.key());
+            if (p == null) continue;
+            switch (e) {
+                case Room.Submit s -> {
+                    p.conditions = s.conditions();
+                    p.submitted = true;
+                    newConditions = changed = true;
+                }
+                case Room.React r -> {
+                    Set<Integer> dis = room.dislikes.computeIfAbsent(p.key, k -> new HashSet<>());
+                    if (r.up()) {
+                        room.likes.put(p.key, r.restaurantId());
+                        dis.remove(r.restaurantId());
+                    } else {
+                        dis.add(r.restaurantId());
+                        room.likes.remove(p.key, r.restaurantId());
+                    }
+                    reactions = changed = true;
+                }
+                case Room.Veto v -> {
+                    Restaurant target = MockRestaurants.byId(v.restaurantId());
+                    if (p.vetoLeft == 0) {
+                        p.notice = "거부권은 이미 썼어요";
+                    } else if (target == null || room.vetoed.contains(v.restaurantId()) || !inRanking(room, v.restaurantId())) {
+                        // 같은 후보에 거부권이 겹치면 두 번째 사람 것은 돌려준다
+                        p.notice = "이미 빠진 후보라 거부권을 돌려드렸어요";
+                    } else {
+                        room.vetoed.add(v.restaurantId());
+                        p.vetoLeft--;
+                        p.notice = "거부권을 썼어요: " + target.name() + " 제외";
+                        vetoLines.add("누군가 거부권을 썼어요 🚫 → " + target.name() + " 제외");
+                        changed = true;
+                    }
+                }
+                case Room.Relax x -> {
+                    if (p.conditions.mustNot().contains(x.tag())) {
+                        p.conditions = p.conditions.relax(x.tag());
+                        relaxed = changed = true;
+                    }
+                }
+            }
+        }
+        if (changed) {
+            recompute(room);
+            if (newConditions) room.log("새 조건이 반영됐어요");
+            if (reactions) room.log("라운드 " + closing + " 반응이 반영됐어요");
+            if (relaxed) room.log("누군가 '절대 안 됨' 하나를 풀어 줬어요");
+            vetoLines.forEach(room::log);
+            String newTop = topName(room);
+            if (!Objects.equals(oldTop, newTop) && newTop != null) {
+                room.log("1순위: " + (oldTop == null ? "없음" : oldTop) + " → " + newTop);
+            }
+            checkDone(room);
+        } else {
+            room.log("라운드 " + closing + ": 반응 없음 — 그대로");
+        }
+        if (room.phase == Views.Phase.NEGOTIATE) openRound(room);
+        room.version++;
+        publishAll(room);
     }
 
     // ---------------------------------------------------------------- 내부
@@ -215,7 +255,14 @@ public class RoomService {
         room.phase = Views.Phase.NEGOTIATE;
         recompute(room);
         room.log("모두의 조건으로 첫 후보를 골랐어요");
+        openRound(room);
         publishAll(room);
+    }
+
+    private void openRound(Room room) {
+        room.round++;
+        room.reacted.clear();
+        room.roundEndsAt = roundMs > 0 ? System.currentTimeMillis() + roundMs : 0;
     }
 
     private void recompute(Room room) {
@@ -233,6 +280,7 @@ public class RoomService {
         long likes = room.likes.values().stream().filter(id -> id == top.restaurant().id()).count();
         if (likes == room.people.size()) {
             room.phase = Views.Phase.DONE;
+            room.roundEndsAt = 0;
             room.log("모두 👍 — " + top.restaurant().name() + "(으)로 확정!");
         }
     }
@@ -243,6 +291,7 @@ public class RoomService {
         withLock(room, () -> {
             if (room.phase != Views.Phase.NEGOTIATE || room.result == null || room.result.top() == null) return;
             room.phase = Views.Phase.DONE;
+            room.roundEndsAt = 0;
             room.version++;
             room.log("시간 종료 — " + room.result.top().restaurant().name() + "(으)로 확정!");
             publishAll(room);
@@ -267,9 +316,10 @@ public class RoomService {
 
     Views.PublicView publicView(Room room) {
         int submitted = (int) room.people.values().stream().filter(p -> p.submitted).count();
+        long remaining = room.roundEndsAt > 0 ? Math.max(0, room.roundEndsAt - System.currentTimeMillis()) : 0;
         if (room.phase == Views.Phase.INPUT || room.result == null) {
             return new Views.PublicView(room.version, room.phase, room.people.size(), submitted,
-                    null, List.of(), null, 0, 0, List.copyOf(room.timeline), null);
+                    null, List.of(), null, 0, 0, List.copyOf(room.timeline), null, 0, 0, 0);
         }
         Engine.Scored top = room.result.top();
         List<Views.Place> next = room.result.ranking().stream().skip(1).limit(2).map(s -> place(s.restaurant())).toList();
@@ -278,7 +328,7 @@ public class RoomService {
         return new Views.PublicView(room.version, room.phase, room.people.size(), submitted,
                 top == null ? null : place(top.restaurant()), next,
                 top == null ? null : percent(top.min()), room.result.ranking().size(), likes,
-                List.copyOf(room.timeline), notice);
+                List.copyOf(room.timeline), notice, room.round, remaining, room.reacted.size());
     }
 
     private Views.PrivateView privateView(Room room, Room.Person p) {

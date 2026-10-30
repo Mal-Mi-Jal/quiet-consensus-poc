@@ -16,9 +16,11 @@ public final class Views {
     public record Place(int id, String name, List<String> tags, int price, int walkMin) {
     }
 
+    /** round·roundRemainingMs·reactedCount: 라운드 번호, 남은 시간(보낸 순간 기준), 이번 라운드에 반응한 사람 수(누군지는 없음) */
     public record PublicView(long version, Phase phase, int joined, int submitted,
                              Place top, List<Place> nextUp, Integer minSatisfactionPercent,
-                             int remaining, int likesOnTop, List<String> timeline, String notice) {
+                             int remaining, int likesOnTop, List<String> timeline, String notice,
+                             int round, long roundRemainingMs, int reactedCount) {
     }
 
     public record PrivateView(long version, Phase phase, Conditions myConditions,
