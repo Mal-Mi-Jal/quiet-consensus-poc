@@ -16,7 +16,7 @@ JDK 21. Gradle wrapper included (first build downloads dependencies — do it on
 
 ```bash
 ./gradlew bootRun                 # Windows: .\gradlew.bat bootRun
-./gradlew test                    # 29 tests: engine, menus, rooms/rounds, concurrency, real STOMP privacy, simulation
+./gradlew test                    # 38 tests: engine, menus, rooms/rounds, reconnect, concurrency, real STOMP privacy, simulation
 ./gradlew test --tests "*ParserEval" -Dollama=true [-DevalSet=tuning|heldout|heldout2|heldout3]   # needs Ollama, ~1 min
 ```
 
@@ -50,6 +50,8 @@ Phases: `INPUT` (screen shows only "제출 n명") → `NEGOTIATE` (rounds) → `
 | **"절대 안 됨" ≤ 2 per person** (tags + dishes combined) | Stops one person from deciding alone; fewer "no candidate" rooms (실험 2). |
 | **Anonymity enforced on the server** | Public view type has no condition fields at all (tested with real STOMP clients). Candidates hidden until everyone submits. |
 | **Rounds** (`qc.round-ms=30000`) | Instant updates removed the moment to react and leaked who pressed what. Round closes early when everyone reacted; veto closes it immediately. Deadline is re-checked **inside the room lock** (check-then-act race fixed). |
+| **Reconnect = same person** (per-tab `sessionStorage` id → `/ws?pid=` → Principal) | A refresh or a sleeping phone used to create a ghost that blocked "everyone submitted/reacted". `sessionStorage` keeps tabs as separate people. The id doubles as the key to the private channel, so it must be 128-bit random; the server rejects short ones. |
+| **Disconnect grace** (`qc.away-grace-ms=30000`) | Never remove on the first disconnect event: it can arrive after the reconnect, so people track live session ids. After the grace period: not submitted → removed; submitted → conditions stay (a dead phone must not drop an allergy), but they stop being waited for (`active`). STOMP heartbeat 10 s catches phones that vanish silently. |
 | **Small tag enum (14) + dish names matched by code** | "카레는 싫어" was mapped to 분식 (closed-set problem, same as the Vision Bot non-ramen gate). Don't add tags; match `menus`. |
 | **Allergies never come from the LLM** | The model invented allergies repeatedly (실험 7). 갑각류/해산물 chips filter shops by category; 땅콩/우유/… are NOT filterable (no ingredient data) → private "직접 확인하세요" card after DONE, opt-in anonymous request to the screen. Never claim the app guarantees allergy safety. |
 | **Parser v5 = LLM + `TextRules`** | v4 (LLM-only dish field) 43% on unseen sentences; v5 12/12 on a new set — but that set is small and mostly dishes in our data (실험 8). |
@@ -70,6 +72,8 @@ Phases: `INPUT` (screen shows only "제출 n명") → `NEGOTIATE` (rounds) → `
 
 ## Known gaps
 
+- A refresh loses what wasn't sent to the server yet: chips before submitting, and the "내 반응" label within a round (the reaction itself still counts; pressing again replaces it).
+- The browser's "duplicate tab" copies `sessionStorage`, so that tab is the same person.
 - `allergyOther` order isn't preserved (Jackson deserializes the record's `Set` as `HashSet`) — cosmetic.
 - Allergen chip list is a subset confirmed from news articles; check the official MFDS labelling list (22 items) before showing it as complete.
 - No persistence, no auth, one JVM — fine for the demo, say so if asked.

@@ -5,6 +5,7 @@ import com.quietconsensus.engine.Engine;
 import com.quietconsensus.engine.Foods;
 import com.quietconsensus.engine.MockRestaurants;
 import com.quietconsensus.engine.Restaurant;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -13,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -29,6 +31,8 @@ import java.util.concurrent.TimeUnit;
  *   → 반응할 틈이 보장되고, 누가 누른 순간 바뀌었는지 티가 나지 않는다
  * - 라운드는 시간이 다 되거나, 전원이 반응하거나, 누군가 거부권을 쓰면 끝난다
  * - 반영할 때마다 "현재 전체 상태"로 처음부터 다시 계산하고 version을 1 올려 방송
+ * - 연결이 끊겨도 바로 빼지 않는다: 유예 시간 안에 돌아오면 같은 사람이고, 안 돌아오면
+ *   제출 전인 사람은 방에서 빼고, 제출한 사람은 조건(알레르기 포함)을 남긴 채 기다리는 대상에서만 뺀다
  */
 @Service
 public class RoomService {
@@ -39,11 +43,19 @@ public class RoomService {
     private final Map<String, Room> rooms = new ConcurrentHashMap<>();
     private final Publisher publisher;
     private final long roundMs;
+    private final long awayGraceMs;
     private final ScheduledExecutorService scheduler;
 
-    public RoomService(Publisher publisher, @Value("${qc.round-ms:30000}") long roundMs) {
+    RoomService(Publisher publisher, long roundMs) {
+        this(publisher, roundMs, 30000);
+    }
+
+    @Autowired
+    public RoomService(Publisher publisher, @Value("${qc.round-ms:30000}") long roundMs,
+                       @Value("${qc.away-grace-ms:30000}") long awayGraceMs) {
         this.publisher = publisher;
         this.roundMs = roundMs;
+        this.awayGraceMs = awayGraceMs;
         if (roundMs > 0) {
             scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "round-timer");
@@ -64,15 +76,30 @@ public class RoomService {
 
     // ---------------------------------------------------------------- 입장 / 입력 단계
 
+    /** 테스트용: 연결 하나뿐인 사람 */
     public void join(String roomId, String key) {
+        join(roomId, key, key);
+    }
+
+    public void join(String roomId, String key, String sessionId) {
         Room room = rooms.computeIfAbsent(roomId, Room::new);
         withLock(room, () -> {
-            if (room.people.containsKey(key)) return;
+            Room.Person known = room.people.get(key);
+            if (known != null) {
+                // 새로고침·재연결: 같은 사람이다. 지금 상태를 다시 보내 화면을 복구한다
+                known.sessions.add(sessionId);
+                known.disconnectedAt = 0;
+                known.away = false;
+                room.version++;
+                publishAll(room);
+                return;
+            }
             if (room.people.size() >= MAX_PEOPLE) {
                 publisher.toPerson(key, privateNotice(room, "방이 꽉 찼어요 (최대 " + MAX_PEOPLE + "명)"));
                 return;
             }
             Room.Person p = new Room.Person(key);
+            p.sessions.add(sessionId);
             room.people.put(key, p);
             if (room.phase != Views.Phase.INPUT && room.result != null && room.result.top() != null) {
                 // 넘겨받기: 늦게 온 사람에게 지금 상황만 요약해 준다
@@ -82,6 +109,53 @@ public class RoomService {
             room.version++;
             publishAll(room);
         });
+    }
+
+    /** 연결 하나가 끊겼다. 여기서는 시각만 적어 두고, 정리는 유예 시간이 지난 뒤 sweepAway가 한다 */
+    public void disconnected(String key, String sessionId) {
+        for (Room room : rooms.values()) {
+            withLock(room, () -> {
+                Room.Person p = room.people.get(key);
+                if (p != null && p.sessions.remove(sessionId) && p.sessions.isEmpty()) {
+                    p.disconnectedAt = System.currentTimeMillis();
+                }
+            });
+        }
+    }
+
+    /** 유예 시간이 지나도 돌아오지 않은 사람을 정리하고, 그 사람을 기다리던 단계를 다시 확인한다 */
+    void sweepAway(long now) {
+        for (Room room : rooms.values()) {
+            withLock(room, () -> {
+                if (room.phase == Views.Phase.DONE) return;
+                boolean changed = false, removed = false;
+                for (Iterator<Room.Person> it = room.people.values().iterator(); it.hasNext(); ) {
+                    Room.Person p = it.next();
+                    if (p.disconnectedAt == 0 || p.away || now - p.disconnectedAt < awayGraceMs) continue;
+                    changed = true;
+                    if (p.submitted) {
+                        p.away = true; // 폰이 꺼졌다고 알레르기 조건이 사라지면 안 된다
+                    } else {
+                        it.remove();
+                        room.dislikes.remove(p.key);
+                        room.likes.remove(p.key);
+                        room.reacted.remove(p.key);
+                        removed = true;
+                    }
+                }
+                if (!changed) return;
+                room.version++;
+                if (room.phase == Views.Phase.INPUT) {
+                    if (everyoneSubmitted(room)) startLocked(room);
+                    else publishAll(room);
+                    return;
+                }
+                if (removed) recompute(room);
+                checkDone(room);
+                if (room.phase == Views.Phase.NEGOTIATE && everyoneReacted(room)) closeRoundLocked(room);
+                else publishAll(room);
+            });
+        }
     }
 
     public void submit(String roomId, String key, Conditions conditions) {
@@ -98,7 +172,7 @@ public class RoomService {
             p.conditions = conditions;
             p.submitted = true;
             room.version++;
-            if (room.people.size() >= MIN_PEOPLE && room.people.values().stream().allMatch(x -> x.submitted)) {
+            if (everyoneSubmitted(room)) {
                 startLocked(room); // 전원 제출 → 그때 처음으로 후보 공개
             } else {
                 publishAll(room); // 입력 단계에는 "몇 명 제출"만 나간다
@@ -128,7 +202,7 @@ public class RoomService {
             if (room.phase != Views.Phase.NEGOTIATE || !room.people.containsKey(key)) return;
             room.pending.add(new Room.React(key, restaurantId, up));
             room.reacted.add(key);
-            if (room.reacted.size() >= room.people.size()) {
+            if (everyoneReacted(room)) {
                 closeRoundLocked(room);
             } else {
                 room.version++;
@@ -160,6 +234,7 @@ public class RoomService {
     /** 타이머: 시간이 다 된 라운드를 닫는다. 마감 시각은 lock 안에서 다시 확인한다
      *  (밖에서만 보면, 그 사이 거부권으로 새로 열린 라운드를 바로 닫아 버릴 수 있다) */
     void tick() {
+        sweepAway(System.currentTimeMillis());
         for (Room room : rooms.values()) {
             if (room.phase != Views.Phase.NEGOTIATE || room.roundEndsAt == 0) continue;
             withLock(room, () -> {
@@ -277,8 +352,8 @@ public class RoomService {
     private void checkDone(Room room) {
         Engine.Scored top = room.result.top();
         if (top == null) return;
-        long likes = room.likes.values().stream().filter(id -> id == top.restaurant().id()).count();
-        if (likes == room.people.size()) {
+        List<String> active = activeKeys(room);
+        if (!active.isEmpty() && active.stream().allMatch(k -> Objects.equals(room.likes.get(k), top.restaurant().id()))) {
             room.phase = Views.Phase.DONE;
             room.roundEndsAt = 0;
             room.log("모두 👍 — " + top.restaurant().name() + "(으)로 확정!");
@@ -296,6 +371,20 @@ public class RoomService {
             room.log("시간 종료 — " + room.result.top().restaurant().name() + "(으)로 확정!");
             publishAll(room);
         });
+    }
+
+    private boolean everyoneSubmitted(Room room) {
+        return room.people.size() >= MIN_PEOPLE && room.people.values().stream().allMatch(p -> p.submitted);
+    }
+
+    private boolean everyoneReacted(Room room) {
+        List<String> active = activeKeys(room);
+        return !active.isEmpty() && room.reacted.containsAll(active);
+    }
+
+    /** 반응을 기다려야 하는 사람들 (제출하고 떠난 사람 제외) */
+    private List<String> activeKeys(Room room) {
+        return room.people.values().stream().filter(p -> !p.away).map(p -> p.key).toList();
     }
 
     private boolean inRanking(Room room, int id) {
@@ -317,18 +406,21 @@ public class RoomService {
     Views.PublicView publicView(Room room) {
         int submitted = (int) room.people.values().stream().filter(p -> p.submitted).count();
         long remaining = room.roundEndsAt > 0 ? Math.max(0, room.roundEndsAt - System.currentTimeMillis()) : 0;
+        List<String> active = activeKeys(room);
         if (room.phase == Views.Phase.INPUT || room.result == null) {
             return new Views.PublicView(room.version, room.phase, room.people.size(), submitted,
-                    null, List.of(), null, 0, 0, List.copyOf(room.timeline), null, 0, 0, 0);
+                    null, List.of(), null, 0, 0, List.copyOf(room.timeline), null, 0, 0, 0, active.size());
         }
         Engine.Scored top = room.result.top();
         List<Views.Place> next = room.result.ranking().stream().skip(1).limit(2).map(s -> place(s.restaurant())).toList();
-        int likes = top == null ? 0 : (int) room.likes.values().stream().filter(id -> id == top.restaurant().id()).count();
+        int likes = top == null ? 0 : (int) active.stream()
+                .filter(k -> Objects.equals(room.likes.get(k), top.restaurant().id())).count();
         String notice = room.result.conflict() ? "필수 조건끼리 부딪혀서 맞는 곳이 없어요. 각자 폰을 확인해 주세요" : null;
         return new Views.PublicView(room.version, room.phase, room.people.size(), submitted,
                 top == null ? null : place(top.restaurant()), next,
                 top == null ? null : percent(top.min()), room.result.ranking().size(), likes,
-                List.copyOf(room.timeline), notice, room.round, remaining, room.reacted.size());
+                List.copyOf(room.timeline), notice, room.round, remaining,
+                (int) active.stream().filter(room.reacted::contains).count(), active.size());
     }
 
     private Views.PrivateView privateView(Room room, Room.Person p) {
@@ -345,7 +437,7 @@ public class RoomService {
         }
         List<String> unmatched = Engine.unmatchedDishes(p.conditions, MockRestaurants.ALL);
         return new Views.PrivateView(room.version, room.phase, p.conditions, ok, total, p.vetoLeft, relaxable, p.notice,
-                unmatched, allergyCheck(room, p), p.allergyRequested);
+                unmatched, allergyCheck(room, p), p.allergyRequested, p.submitted);
     }
 
     /** 확정 후, 식당 데이터로 거를 수 없는 알레르기(땅콩·우유…)가 있는 사람에게만 보여 줄 문구 */
@@ -372,7 +464,7 @@ public class RoomService {
 
     private Views.PrivateView privateNotice(Room room, String notice) {
         return new Views.PrivateView(room.version, room.phase, Conditions.empty(), null, null, 0, List.of(), notice,
-                List.of(), null, false);
+                List.of(), null, false, false);
     }
 
     private static Views.Place place(Restaurant r) {

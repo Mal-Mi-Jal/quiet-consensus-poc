@@ -32,9 +32,10 @@
       <div class="stat" id="likes"></div>
       <p class="hint" id="next"></p>
       <div class="row" style="margin-top:12px">
-        <button class="sec" id="startBtn">입력 마감하고 시작</button>
+        <button class="sec" id="startBtn" disabled>입력 마감하고 시작</button>
         <button class="sec" id="finishBtn">시간 종료 · 확정</button>
       </div>
+      <p class="hint" id="startHint">3명 이상 제출해야 시작할 수 있어요 (지금 0명)</p>
     </div>
     <div class="card">
       <h2>AI 판단 타임라인 (이름 없이)</h2>
@@ -44,6 +45,7 @@
 </div>
 <script>
 const room = new URLSearchParams(location.search).get("room") || "lunch";
+const MIN_PEOPLE = 3; // 서버 RoomService.MIN_PEOPLE과 같은 값 (2명이면 상대 조건이 드러나서 익명이 깨진다)
 const $ = id => document.getElementById(id);
 $("joinUrl").textContent = `폰으로 접속: ${location.origin}/?room=${room}`;
 let lastVersion = -1, phase = "INPUT", round = 0, roundDeadline = 0, reacted = 0, joined = 0;
@@ -63,7 +65,7 @@ $("finishBtn").onclick = () => send("finish");
 function render(v) {
   if (v.version < lastVersion) return;
   lastVersion = v.version;
-  phase = v.phase; round = v.round; reacted = v.reactedCount; joined = v.joined;
+  phase = v.phase; round = v.round; reacted = v.reactedCount; joined = v.active;
   roundDeadline = Date.now() + v.roundRemainingMs;
   renderRound();
   $("phase").textContent = { INPUT: "① 비밀 입력", NEGOTIATE: "② 조율 중", DONE: "③ 확정" }[v.phase];
@@ -73,13 +75,16 @@ function render(v) {
     $("top").textContent = (v.phase === "DONE" ? "✅ " : "") + v.top.name;
     $("tags").textContent = `${v.top.tags.join(" · ")} · ${v.top.price.toLocaleString()}원 · 도보 ${v.top.walkMin}분`;
     $("minSat").textContent = `가장 덜 만족한 사람도 ${v.minSatisfactionPercent}%`;
-    $("likes").textContent = `👍 ${v.likesOnTop} / ${v.joined}`;
+    $("likes").textContent = `👍 ${v.likesOnTop} / ${v.active}`;
     $("next").textContent = v.nextUp.length ? "다음 후보: " + v.nextUp.map(p => p.name).join(", ") : "";
   } else { $("top").textContent = "맞는 곳이 없어요"; $("tags").textContent = ""; $("minSat").textContent = ""; }
   const t = $("timeline"); t.replaceChildren();
   v.timeline.forEach(line => { const d = document.createElement("div"); d.textContent = line; t.appendChild(d); });
   const n = $("notice"); n.classList.toggle("hidden", !v.notice); n.textContent = v.notice || "";
-  $("startBtn").disabled = v.phase !== "INPUT"; $("finishBtn").disabled = v.phase !== "NEGOTIATE";
+  const tooFew = v.phase === "INPUT" && v.submitted < MIN_PEOPLE;
+  $("startBtn").disabled = v.phase !== "INPUT" || tooFew; $("finishBtn").disabled = v.phase !== "NEGOTIATE";
+  $("startHint").classList.toggle("hidden", !tooFew);
+  $("startHint").textContent = `${MIN_PEOPLE}명 이상 제출해야 시작할 수 있어요 (지금 ${v.submitted}명)`;
 }
 </script>
 </body>

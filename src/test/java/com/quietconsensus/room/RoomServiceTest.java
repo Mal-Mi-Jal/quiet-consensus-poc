@@ -297,4 +297,114 @@ class RoomServiceTest {
         assertThat(cap.lastPrivate("p8").notice()).contains("꽉 찼어요");
         assertThat(cap.lastPublic().joined()).isEqualTo(8);
     }
+
+    // ---------------------------------------------------------------- 새로고침 · 연결 끊김
+
+    private static long afterGrace() {
+        return System.currentTimeMillis() + 31000;
+    }
+
+    @Test
+    void 새로고침해도_같은_사람이고_제출_상태와_거부권이_복구된다() {
+        Capture cap = new Capture();
+        RoomService s = ready(cap, "r", 3);
+        s.submit("r", "p0", want("국물"));
+        s.disconnected("p0", "p0");
+        s.join("r", "p0", "새연결");
+
+        assertThat(cap.lastPublic().joined()).isEqualTo(3);
+        assertThat(cap.lastPublic().submitted()).isEqualTo(1);
+        Views.PrivateView me = cap.lastPrivate("p0");
+        assertThat(me.submitted()).isTrue();
+        assertThat(me.myConditions().want()).contains("국물");
+        assertThat(me.vetoLeft()).isEqualTo(1);
+    }
+
+    @Test
+    void 유예_시간_안에_돌아오면_빠지지_않는다() {
+        Capture cap = new Capture();
+        RoomService s = ready(cap, "r", 3);
+        s.disconnected("p0", "p0");
+        s.sweepAway(System.currentTimeMillis()); // 아직 유예 시간 안
+        assertThat(s.room("r").people).containsKey("p0");
+
+        s.join("r", "p0", "새연결");
+        s.sweepAway(afterGrace());
+        assertThat(s.room("r").people).containsKey("p0");
+    }
+
+    @Test
+    void 재연결이_먼저_오고_옛_연결_끊김이_늦게_와도_빠지지_않는다() {
+        Capture cap = new Capture();
+        RoomService s = ready(cap, "r", 3);
+        s.join("r", "p0", "새연결");
+        s.disconnected("p0", "p0"); // 옛 연결의 끊김이 뒤늦게 도착
+        s.disconnected("p0", "p0"); // 같은 끊김이 두 번 와도 괜찮다
+        s.sweepAway(afterGrace());
+        assertThat(s.room("r").people).containsKey("p0");
+    }
+
+    @Test
+    void 제출_전에_떠난_사람은_빠지고_남은_사람이_전원_제출이면_시작된다() {
+        Capture cap = new Capture();
+        RoomService s = ready(cap, "r", 4);
+        for (int i = 0; i < 3; i++) s.submit("r", "p" + i, want("국물"));
+        assertThat(cap.lastPublic().phase()).isEqualTo(Views.Phase.INPUT);
+
+        s.disconnected("p3", "p3");
+        s.sweepAway(afterGrace());
+
+        assertThat(cap.lastPublic().joined()).isEqualTo(3);
+        assertThat(cap.lastPublic().phase()).isEqualTo(Views.Phase.NEGOTIATE);
+    }
+
+    @Test
+    void 제출하고_떠난_사람의_조건은_남고_반응은_기다리지_않는다() {
+        Capture cap = new Capture();
+        RoomService s = ready(cap, "r", 3);
+        s.submit("r", "p0", new Conditions(Set.of("갑각류"), Set.of(), Set.of(), Set.of(), null));
+        s.submit("r", "p1", want("국물"));
+        s.submit("r", "p2", want("국물"));
+        int top = cap.lastPublic().top().id();
+        s.react("r", "p1", top, true);
+        s.react("r", "p2", top, false);
+        int roundBefore = cap.lastPublic().round();
+
+        s.disconnected("p0", "p0");
+        s.sweepAway(afterGrace());
+
+        assertThat(s.room("r").people).containsKey("p0");
+        assertThat(s.recomputeFresh("r").ranking()).extracting(x -> x.restaurant().tags())
+                .noneMatch(tags -> tags.contains("갑각류")); // 알레르기는 계속 지킨다
+        assertThat(cap.lastPublic().joined()).isEqualTo(3);
+        assertThat(cap.lastPublic().active()).isEqualTo(2);
+        assertThat(cap.lastPublic().round()).isGreaterThan(roundBefore); // 남은 둘이 다 반응했으니 라운드가 닫힌다
+    }
+
+    @Test
+    void 남은_사람이_모두_좋아요면_떠난_사람을_기다리지_않고_확정된다() {
+        Capture cap = new Capture();
+        RoomService s = ready(cap, "r", 3);
+        for (int i = 0; i < 3; i++) s.submit("r", "p" + i, want("국물"));
+        s.disconnected("p0", "p0");
+        s.sweepAway(afterGrace());
+        int top = cap.lastPublic().top().id();
+        s.react("r", "p1", top, true);
+        s.react("r", "p2", top, true);
+        assertThat(cap.lastPublic().phase()).isEqualTo(Views.Phase.DONE);
+    }
+
+    @Test
+    void 떠났던_사람이_돌아오면_다시_반응_대상이_된다() {
+        Capture cap = new Capture();
+        RoomService s = ready(cap, "r", 3);
+        for (int i = 0; i < 3; i++) s.submit("r", "p" + i, want("국물"));
+        s.disconnected("p0", "p0");
+        s.sweepAway(afterGrace());
+        assertThat(cap.lastPublic().active()).isEqualTo(2);
+
+        s.join("r", "p0", "새연결");
+        assertThat(cap.lastPublic().active()).isEqualTo(3);
+        assertThat(cap.lastPrivate("p0").submitted()).isTrue();
+    }
 }

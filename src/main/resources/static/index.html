@@ -153,7 +153,17 @@ function notice(msg) {
   clearTimeout(notice.t); notice.t = setTimeout(() => n.classList.add("hidden"), 5000);
 }
 
-const client = new StompJs.Client({ brokerURL: (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws", reconnectDelay: 2000 });
+// 탭마다 고정 id: 새로고침·재연결해도 같은 사람. sessionStorage라서 탭을 여러 개 열면 다른 사람이 된다
+// (crypto.randomUUID는 https에서만 된다 — 폰은 http://PC-IP 로 들어오므로 getRandomValues를 쓴다)
+function personId() {
+  let id = sessionStorage.getItem("qc-person");
+  if (!id) {
+    id = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
+    sessionStorage.setItem("qc-person", id);
+  }
+  return id;
+}
+const client = new StompJs.Client({ brokerURL: (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws?pid=" + personId(), reconnectDelay: 2000 });
 client.onConnect = () => {
   client.subscribe("/topic/room/" + room, m => onPublic(JSON.parse(m.body)));
   client.subscribe("/user/queue/me", m => onPrivate(JSON.parse(m.body)));
@@ -165,9 +175,9 @@ function send(what, body) { client.publish({ destination: `/app/room/${room}/${w
 
 function onPublic(v) {
   if (v.version < lastVersion) return; // 늦게 도착한 옛 버전은 무시
-  lastVersion = v.version; phase = v.phase;
+  lastVersion = v.version; phase = v.phase; lastPublic = v;
   if (v.round !== round) myReaction = null; // 새 라운드 → 내 반응 초기화
-  round = v.round; reacted = v.reactedCount; joined = v.joined;
+  round = v.round; reacted = v.reactedCount; joined = v.active;
   roundDeadline = Date.now() + v.roundRemainingMs;
   renderRound();
   $("status").textContent = v.phase === "INPUT" ? `참가 ${v.joined}명 · 제출 ${v.submitted}명` : `참가 ${v.joined}명 · 후보 ${v.remaining}곳`;
@@ -184,6 +194,10 @@ function onPublic(v) {
 }
 function onPrivate(p) {
   if (p.notice) notice(p.notice);
+  if (p.submitted !== submitted) { // 새로고침하면 제출 여부를 서버가 알려 준다
+    submitted = p.submitted;
+    if (lastPublic) onPublic(lastPublic);
+  }
   $("mySat").textContent = p.myTotal == null ? "" :
     p.myTotal === 0 ? "내 조건: 없음 (어디든 OK)" : `내 조건 ${p.myTotal}개 중 ${p.mySatisfied}개 반영 (나만 보여요)`;
   $("vetoBtn").textContent = `🚫 거부권 (${p.vetoLeft})`; $("vetoBtn").disabled = p.vetoLeft === 0;
@@ -224,7 +238,7 @@ function onParsed(r) {
   box.appendChild(ok);
 }
 
-let submitted = false;
+let submitted = false, lastPublic = null;
 $("parseBtn").onclick = () => { const t = $("text").value.trim(); if (t) { send("parse", { text: t }); $("parsed").classList.remove("hidden"); $("parsed").textContent = "정리 중…"; } };
 $("submitBtn").onclick = () => { submitted = true; send("submit", conditions()); $("input").classList.add("hidden"); $("status").textContent += " — 제출 완료, 다른 사람을 기다리는 중"; };
 $("upBtn").onclick = () => { if (topId) { send("react", { restaurantId: topId, up: true }); myReaction = "👍"; renderRound(); } };

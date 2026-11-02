@@ -44,9 +44,13 @@ class StompPrivacyTest {
     }
 
     private Peer connect(String room) throws Exception {
+        return connect(room, "");
+    }
+
+    private Peer connect(String room, String query) throws Exception {
         WebSocketStompClient client = new WebSocketStompClient(new StandardWebSocketClient());
         client.setMessageConverter(new SimpleMessageConverter()); // byte[] 그대로 주고받기
-        StompSession s = client.connectAsync("ws://localhost:" + port + "/ws", new StompSessionHandlerAdapter() {
+        StompSession s = client.connectAsync("ws://localhost:" + port + "/ws" + query, new StompSessionHandlerAdapter() {
         }).get(5, TimeUnit.SECONDS);
         Peer p = new Peer(s);
         s.subscribe("/topic/room/" + room, collector(p.publics));
@@ -96,5 +100,36 @@ class StompPrivacyTest {
         assertThat(cPriv).contains("\"preferNot\":[\"매운음식\"]").doesNotContain("갑각류", "12000");
         System.out.printf("%n[실제 WebSocket] 3명 연결 → 공개 메시지 %d/%d/%d개(조건 없음 ✅), 개인 메시지는 본인 조건만 ✅%n",
                 a.publics.size(), b.publics.size(), c.publics.size());
+    }
+
+    @Test
+    void 끊고_같은_id로_다시_연결하면_인원이_늘지_않고_내_상태를_돌려받는다() throws Exception {
+        String room = "refresh", query = "?pid=0123456789abcdef0123456789abcdef";
+        Peer first = connect(room, query);
+        first.send("/app/room/" + room + "/join", "{}");
+        Thread.sleep(200);
+        first.send("/app/room/" + room + "/submit", "{\"allergy\":[],\"mustNot\":[],\"preferNot\":[],\"want\":[\"국물\"],\"maxPrice\":null}");
+        Thread.sleep(200);
+        first.session.disconnect();
+        Thread.sleep(200);
+
+        Peer second = connect(room, query); // 새로고침
+        second.send("/app/room/" + room + "/join", "{}");
+        Thread.sleep(300);
+
+        assertThat(second.publics).isNotEmpty();
+        assertThat(second.publics.get(second.publics.size() - 1)).contains("\"joined\":1", "\"submitted\":1");
+        assertThat(second.privates).isNotEmpty();
+        assertThat(second.privates.get(second.privates.size() - 1)).contains("\"submitted\":true", "\"want\":[\"국물\"]");
+    }
+
+    @Test
+    void 이상한_id는_쓰지_않고_연결마다_다른_사람이_된다() throws Exception {
+        String room = "badpid", query = "?pid=short";
+        Peer a = connect(room, query), b = connect(room, query);
+        a.send("/app/room/" + room + "/join", "{}");
+        b.send("/app/room/" + room + "/join", "{}");
+        Thread.sleep(300);
+        assertThat(a.publics.get(a.publics.size() - 1)).contains("\"joined\":2");
     }
 }

@@ -3,9 +3,12 @@ package com.quietconsensus.ws;
 import com.quietconsensus.engine.Conditions;
 import com.quietconsensus.llm.ConditionParser;
 import com.quietconsensus.room.RoomService;
+import org.springframework.context.event.EventListener;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.stereotype.Controller;
+import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 
 import java.security.Principal;
 
@@ -33,8 +36,14 @@ public class RoomController {
     }
 
     @MessageMapping("/room/{roomId}/join")
-    public void join(@DestinationVariable String roomId, Principal who) {
-        rooms.join(roomId, who.getName());
+    public void join(@DestinationVariable String roomId, Principal who, @Header("simpSessionId") String sessionId) {
+        rooms.join(roomId, who.getName(), sessionId);
+    }
+
+    /** 새로고침, 화면 꺼짐, 와이파이 끊김 모두 여기로 온다. 같은 연결로 두 번 올 수도 있다. */
+    @EventListener
+    public void onDisconnect(SessionDisconnectEvent event) {
+        if (event.getUser() != null) rooms.disconnected(event.getUser().getName(), event.getSessionId());
     }
 
     /** 평문을 조건으로 바꿔 본인에게만 돌려준다. 원문은 저장하지도 로그에 남기지도 않는다. */

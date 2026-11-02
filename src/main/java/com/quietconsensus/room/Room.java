@@ -24,6 +24,12 @@ final class Room {
         int vetoLeft = 1;
         String notice;
         boolean allergyRequested;
+        /** 지금 살아 있는 연결들. 재연결이 먼저 오고 옛 연결의 끊김이 늦게 올 수 있어서 개수로 판단한다 */
+        final Set<String> sessions = new HashSet<>();
+        /** 연결이 모두 끊긴 시각 (0이면 연결 중) */
+        long disconnectedAt;
+        /** 제출하고 떠난 사람: 조건은 계산에 남기고, 반응을 기다리는 대상에서만 뺀다 */
+        boolean away;
 
         Person(String key) {
             this.key = key;
