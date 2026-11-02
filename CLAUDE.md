@@ -67,8 +67,9 @@ Phases: `INPUT` (screen shows only "제출 n명") → `NEGOTIATE` (rounds) → `
 1. **Deploy first** (Render or Railway free tier; Dockerfile not written yet — multi-stage Gradle build → JRE 21). Phones need a public URL; WebSocket over `wss://` works on both. Wake the free instance right before the demo.
 2. **Real restaurant data**: Kakao Local API keyword search around a point (key via env var, never committed). Map Kakao category paths to our 14 tags; use place names as `menus` fallback. Fixes "8 people → 26% no candidate" with 15 mock shops.
 3. **Swappable LLM provider**: extract an interface from `ConditionParser` (Ollama / a hosted API if the organizers give credits); re-run `ParserEval` with the new model and the same sentences.
-4. Room creation + QR code on the screen.
-5. Shift-scheduling mode (same engine; carry "least satisfied last time" between rounds/sessions).
+4. **AI mediator (the answer to "where is the AI?" — chips alone run the app today)**: code computes per person which condition blocks how many candidates; the LLM asks that person privately and turns the free-text reply into conditions; code re-decides. Prompts hold only that person's conditions + code-computed facts, so others' conditions can't leak; on failure or a number mismatch show code's default sentence. Pitch deck slide 12.
+5. Room creation + QR code on the screen.
+6. Shift-scheduling mode, only if time remains (same engine; carry "least satisfied last time" between rounds/sessions).
 
 ## Known gaps
 
