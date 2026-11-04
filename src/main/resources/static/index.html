@@ -55,32 +55,69 @@
     <button class="main" id="submitBtn">비밀로 제출</button>
   </section>
 
-  <!-- ② 조율 -->
+  <!-- ② 조율: 카드는 내가 누를 때만 넘어간다 -->
   <section id="negotiate" class="hidden">
     <div class="round" id="roundBar"></div>
-    <div class="card">
-      <div class="sub" style="margin:0">지금 1순위</div>
+
+    <!-- AI 중재자: 나에게만 온 질문 -->
+    <div class="card mediator hidden" id="medCard">
+      <div class="med-head">🤖 AI 중재자 <span class="hint" style="margin:0">· 나에게만 보여요</span></div>
+      <p id="medText" class="med-text"></p>
+      <div id="medAsk">
+        <div class="row">
+          <button class="sec ok-btn" id="medRelax">괜찮아요, 풀게요</button>
+          <button class="sec" id="medKeep">그대로 둘게요</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <input id="medInput" maxlength="200" placeholder="말로 답해도 돼요 (예: 국물 있는 면만 싫어요)" class="txt" style="flex:3">
+          <button class="sec" id="medSend" style="flex:1">보내기</button>
+        </div>
+        <p class="hint">답한 원문은 저장하지 않아요. 바뀌는 내용은 적용 전에 꼭 보여 드려요.</p>
+      </div>
+      <p id="medThinking" class="hint hidden">AI가 답을 정리하고 있어요…</p>
+      <div id="medProposal" class="hidden">
+        <div class="hint" style="margin:0 0 6px">이렇게 바꿀까요?</div>
+        <ul id="medLines" class="med-lines"></ul>
+        <div class="row">
+          <button class="sec ok-btn" id="medApply">적용</button>
+          <button class="sec" id="medCancel">취소</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card now-card" id="nowCard">
+      <div class="sub" style="margin:0" id="cardPos">지금 후보</div>
       <div class="top-name" id="topName">-</div>
       <div class="tags" id="topTags"></div>
       <p id="mySat" style="margin:10px 0 0"></p>
     </div>
-    <div class="row">
-      <button class="sec" id="upBtn">👍 좋아요</button>
-      <button class="sec" id="downBtn">👎 별로</button>
-      <button class="sec" id="vetoBtn">🚫 거부권</button>
+    <div class="row" id="reactRow">
+      <button class="sec big-btn" id="upBtn">👍 좋아요</button>
+      <button class="sec big-btn" id="downBtn">👎 별로</button>
+      <button class="sec" id="vetoBtn" style="flex:.8">🚫 거부권</button>
     </div>
+    <div class="card hidden" id="allDone">
+      <b>모든 후보에 의견을 냈어요 ✅</b>
+      <p class="hint">다른 사람을 기다리는 중이에요. 아래 블록을 눌러 마음을 바꿀 수 있어요.</p>
+    </div>
+
     <div class="card hidden" id="relaxCard" style="margin-top:14px">
       <h2>맞는 곳이 없어요</h2>
       <p class="hint">내 '절대 안 됨' 중 하나를 '가능하면 피함'으로 바꿔 줄 수 있나요? 누가 바꿨는지는 아무도 몰라요.</p>
       <div class="chips" id="relaxChips" style="margin-top:8px"></div>
     </div>
+
+    <div id="historyBox" class="hidden" style="margin-top:14px">
+      <div class="sub" style="margin:0 0 8px">내가 본 후보 (눌러서 👍/👎 바꾸기)</div>
+      <div class="blocks" id="history"></div>
+    </div>
     <p class="hint" id="unmatched"></p>
-    <p class="hint" id="myReaction"></p>
-    <p class="hint">반응은 라운드가 끝날 때 한꺼번에 반영돼요. 그 전엔 마음을 바꿔도 돼요. 거부권은 바로 반영되고 새 라운드가 시작돼요.</p>
+    <p class="hint">누르면 바로 반영돼요. 다른 사람이 빨리 눌러도 내 카드는 내가 누를 때만 넘어가요.</p>
   </section>
 
   <section id="done" class="hidden">
-    <div class="card"><div class="sub" style="margin:0">확정!</div><div class="top-name" id="doneName"></div></div>
+    <div class="card"><div class="sub" style="margin:0">확정!</div><div class="top-name" id="doneName"></div>
+      <p class="hint" id="doneReason"></p><p id="doneSat" style="margin:6px 0 0"></p></div>
     <div class="notice hidden" id="allergyCard">
       <div id="allergyCheckText"></div>
       <button class="sec" id="allergyRequestBtn" style="margin-top:10px">익명으로 단체에 확인 요청하기</button>
@@ -100,18 +137,19 @@ const ALLERGY_OTHER = ["땅콩", "우유", "달걀", "밀", "대두", "메밀", 
 const allergyOther = new Set();
 const dishes = new Map(); // 메뉴 이름 → "want" | "avoid" | "never"
 const neverCount = () => FOODS.filter(x => state[x] === "never").length + [...dishes.values()].filter(v => v === "never").length;
-let lastVersion = -1, topId = null, phase = "INPUT";
-let round = 0, roundDeadline = 0, reacted = 0, joined = 0, myReaction = null;
+let lastVersion = -1, cardId = null, phase = "INPUT", deadline = 0, extended = false, candidates = 0;
+let medId = null;
 const $ = id => document.getElementById(id);
 
-// 라운드 남은 시간: 서버가 보낸 "남은 ms"를 받은 순간부터 폰에서 거꾸로 센다 (폰 시계가 달라도 괜찮음)
-function renderRound() {
+// 남은 시간: 서버가 보낸 "남은 ms"를 받은 순간부터 폰에서 거꾸로 센다 (폰 시계가 달라도 괜찮음)
+function renderTimer() {
   if (phase !== "NEGOTIATE") { $("roundBar").textContent = ""; return; }
-  const left = Math.max(0, Math.ceil((roundDeadline - Date.now()) / 1000));
-  $("roundBar").textContent = `라운드 ${round} · ⏱ ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} · 반응 ${reacted}/${joined}`;
-  $("myReaction").textContent = myReaction ? `이번 라운드 내 반응: ${myReaction} (라운드가 끝나기 전엔 바꿀 수 있어요)` : "아직 반응하지 않았어요";
+  const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+  const t = deadline ? `⏱ ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "⏱ 진행 중";
+  $("roundBar").textContent = `${t}${extended ? " (연장)" : ""} · 후보 ${candidates}곳`;
+  $("roundBar").classList.toggle("urgent", deadline > 0 && left <= 15);
 }
-setInterval(renderRound, 250);
+setInterval(renderTimer, 250);
 
 function chip(label, cls, onClick) {
   const b = document.createElement("button");
@@ -176,34 +214,55 @@ function send(what, body) { client.publish({ destination: `/app/room/${room}/${w
 function onPublic(v) {
   if (v.version < lastVersion) return; // 늦게 도착한 옛 버전은 무시
   lastVersion = v.version; phase = v.phase; lastPublic = v;
-  if (v.round !== round) myReaction = null; // 새 라운드 → 내 반응 초기화
-  round = v.round; reacted = v.reactedCount; joined = v.active;
-  roundDeadline = Date.now() + v.roundRemainingMs;
-  renderRound();
-  $("status").textContent = v.phase === "INPUT" ? `참가 ${v.joined}명 · 제출 ${v.submitted}명` : `참가 ${v.joined}명 · 후보 ${v.remaining}곳`;
+  deadline = v.remainingMs ? Date.now() + v.remainingMs : 0; extended = v.extended;
+  candidates = v.board.filter(b => !b.out).length;
+  renderTimer();
+  $("status").textContent = v.phase === "INPUT" ? `참가 ${v.joined}명 · 제출 ${v.submitted}명` : `참가 ${v.joined}명`;
   $("input").classList.toggle("hidden", v.phase !== "INPUT" || submitted);
   $("negotiate").classList.toggle("hidden", v.phase !== "NEGOTIATE");
   $("done").classList.toggle("hidden", v.phase !== "DONE");
   if (v.phase === "INPUT" && submitted) $("status").textContent += " — 다른 사람을 기다리는 중";
-  if (v.top) {
-    topId = v.top.id;
-    $("topName").textContent = v.top.name; $("doneName").textContent = v.top.name;
-    $("topTags").textContent = `${v.top.tags.join(" · ")} · ${v.top.price.toLocaleString()}원 · 도보 ${v.top.walkMin}분`;
-  } else { topId = null; $("topName").textContent = "맞는 곳이 없어요"; $("topTags").textContent = ""; }
+  if (v.winner) { $("doneName").textContent = v.winner.name; $("doneReason").textContent = v.winnerReason || ""; }
   if (v.notice) notice(v.notice);
 }
+const placeLine = p => `${p.tags.join(" · ")} · ${p.price.toLocaleString()}원 · 도보 ${p.walkMin}분`;
 function onPrivate(p) {
   if (p.notice) notice(p.notice);
   if (p.submitted !== submitted) { // 새로고침하면 제출 여부를 서버가 알려 준다
     submitted = p.submitted;
     if (lastPublic) onPublic(lastPublic);
   }
-  $("mySat").textContent = p.myTotal == null ? "" :
-    p.myTotal === 0 ? "내 조건: 없음 (어디든 OK)" : `내 조건 ${p.myTotal}개 중 ${p.mySatisfied}개 반영 (나만 보여요)`;
+  const c = p.card;
+  const sat = c == null ? "" : c.myTotal === 0 ? "내 조건: 없음 (어디든 OK)" : `내 조건 ${c.myTotal}개 중 ${c.mySatisfied}개 맞아요 (나만 보여요)`;
+  if (p.phase === "DONE") { $("doneSat").textContent = sat; }
+  else {
+    const changed = (c ? c.place.id : null) !== cardId;
+    cardId = c ? c.place.id : null;
+    $("nowCard").classList.toggle("hidden", !c); $("reactRow").classList.toggle("hidden", !c);
+    $("allDone").classList.toggle("hidden", !!c || p.phase !== "NEGOTIATE" || p.relaxable.length > 0);
+    if (c) {
+      $("cardPos").textContent = `후보 ${c.position} / ${c.total}`;
+      $("topName").textContent = c.place.name; $("topTags").textContent = placeLine(c.place); $("mySat").textContent = sat;
+      if (changed) { const n = $("nowCard"); n.classList.remove("slide"); void n.offsetWidth; n.classList.add("slide"); }
+    }
+  }
   $("vetoBtn").textContent = `🚫 거부권 (${p.vetoLeft})`; $("vetoBtn").disabled = p.vetoLeft === 0;
+  // 지난 카드 블록: 지워지지 않고 남는다. 눌러서 반응을 바꿀 수 있다 (빠진 후보는 못 누름)
+  const h = $("history"); h.replaceChildren();
+  $("historyBox").classList.toggle("hidden", p.history.length === 0 || p.phase !== "NEGOTIATE");
+  p.history.forEach(x => {
+    const b = document.createElement("button");
+    b.className = "block " + (x.out ? "out" : x.up ? "up" : "down");
+    const name = document.createElement("div"); name.className = "bname"; name.textContent = x.place.name;
+    const mark = document.createElement("div"); mark.className = "bmark"; mark.textContent = x.out ? "빠짐" : x.up ? "👍" : "👎";
+    b.append(name, mark); b.disabled = x.out;
+    b.onclick = () => send("react", { restaurantId: x.place.id, up: !x.up });
+    h.appendChild(b);
+  });
   $("relaxCard").classList.toggle("hidden", p.relaxable.length === 0);
   const r = $("relaxChips"); r.replaceChildren();
   p.relaxable.forEach(t => r.appendChild(chip(t + " 풀기", "never", () => send("relax", { tag: t }))));
+  renderMediator(p.mediator);
   // 내가 적은 메뉴인데 후보 어디서도 안 파는 것 — 조용히 무시하지 않고 알려 준다
   $("unmatched").textContent = p.unmatchedDishes && p.unmatchedDishes.length
     ? `후보 중에 ${p.unmatchedDishes.join(", ")}을(를) 파는 곳이 없어서 반영되지 않았어요` : "";
@@ -215,6 +274,23 @@ function onPrivate(p) {
     $("allergyRequestBtn").textContent = p.allergyRequested ? "확인 요청을 보냈어요" : "익명으로 단체에 확인 요청하기";
   }
 }
+function renderMediator(m) {
+  const card = $("medCard");
+  if (!m) { card.classList.add("hidden"); medId = null; return; }
+  if (m.id !== medId) { card.classList.remove("pop"); void card.offsetWidth; card.classList.add("pop"); $("medInput").value = ""; }
+  medId = m.id;
+  card.classList.remove("hidden");
+  $("medText").textContent = m.text;
+  $("medAsk").classList.toggle("hidden", m.state !== "ASKING");
+  $("medThinking").classList.toggle("hidden", m.state !== "THINKING");
+  $("medProposal").classList.toggle("hidden", m.state !== "PROPOSAL");
+  const ul = $("medLines"); ul.replaceChildren();
+  (m.proposal || []).forEach(l => { const li = document.createElement("li"); li.textContent = l; ul.appendChild(li); });
+  if (m.state === "PROPOSAL" && m.proposalAfter != null) {
+    const li = document.createElement("li"); li.className = "ok"; li.textContent = `→ 적용하면 후보 ${m.proposalAfter}곳`; ul.appendChild(li);
+  }
+}
+const mediate = (choice, text) => medId && send("mediate", { questionId: medId, choice, text: text || null });
 function onParsed(r) {
   const box = $("parsed"); box.classList.remove("hidden"); box.replaceChildren();
   const line = (label, arr) => { if (arr.length) { const d = document.createElement("div"); d.textContent = label + arr.join(", "); box.appendChild(d); } };
@@ -241,9 +317,14 @@ function onParsed(r) {
 let submitted = false, lastPublic = null;
 $("parseBtn").onclick = () => { const t = $("text").value.trim(); if (t) { send("parse", { text: t }); $("parsed").classList.remove("hidden"); $("parsed").textContent = "정리 중…"; } };
 $("submitBtn").onclick = () => { submitted = true; send("submit", conditions()); $("input").classList.add("hidden"); $("status").textContent += " — 제출 완료, 다른 사람을 기다리는 중"; };
-$("upBtn").onclick = () => { if (topId) { send("react", { restaurantId: topId, up: true }); myReaction = "👍"; renderRound(); } };
-$("downBtn").onclick = () => { if (topId) { send("react", { restaurantId: topId, up: false }); myReaction = "👎"; renderRound(); } };
-$("vetoBtn").onclick = () => topId && send("veto", { restaurantId: topId, up: false });
+$("upBtn").onclick = () => cardId && send("react", { restaurantId: cardId, up: true });
+$("downBtn").onclick = () => cardId && send("react", { restaurantId: cardId, up: false });
+$("vetoBtn").onclick = () => cardId && confirm("거부권은 1장뿐이에요. 이 후보를 모두의 후보에서 뺄까요?") && send("veto", { restaurantId: cardId, up: false });
+$("medRelax").onclick = () => mediate("relax");
+$("medKeep").onclick = () => mediate("keep");
+$("medSend").onclick = () => { const t = $("medInput").value.trim(); if (t) mediate("text", t); };
+$("medApply").onclick = () => mediate("apply");
+$("medCancel").onclick = () => mediate("cancel");
 $("allergyRequestBtn").onclick = () => send("allergy-check", {});
 $("allergyOtherAdd").onclick = () => {
   const t = $("allergyOtherText").value.trim();

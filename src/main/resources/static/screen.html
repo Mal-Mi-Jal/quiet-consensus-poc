@@ -7,14 +7,45 @@
 <link rel="stylesheet" href="app.css">
 <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
 <style>
-  .wrap { max-width: 980px; }
-  .big { font-size: 52px; font-weight: 800; margin: 6px 0 4px; }
-  .grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
-  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } .big { font-size: 36px; } }
-  .stat { font-size: 20px; margin-top: 10px; }
-  #timeline div { padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 15px; }
-  .round { font-size: 22px; padding: 12px 18px; }
-  .phase { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--text); color: #fff; font-size: 13px; }
+  .wrap { max-width: 1180px; }
+  .layout { display: grid; grid-template-columns: 1fr 300px; gap: 16px; align-items: start; }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+  .phase { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--text); color: #fff; font-size: 13px; vertical-align: middle; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; background: var(--text); color: #fff;
+         border-radius: 14px; padding: 12px 18px; margin-bottom: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .bar .timer { font-size: 26px; }
+  .bar .timer.urgent { color: #ffb4a6; }
+  .bar .lead { font-size: 18px; }
+  .bar .wait { font-size: 15px; font-weight: 600; opacity: .9; }
+  .board { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+  .sblock { position: relative; background: var(--card); border: 2px solid var(--line); border-radius: 14px; padding: 12px 14px;
+            transition: border-color .4s, box-shadow .4s, opacity .4s, transform .4s; }
+  .sblock .nm { font-weight: 800; font-size: 18px; }
+  .sblock .tg { color: var(--muted); font-size: 12px; margin: 2px 0 8px; min-height: 16px; }
+  .sblock .likes { font-size: 22px; font-weight: 800; }
+  .sblock .likes.bump { animation: bump .5s; }
+  .sblock .meter { height: 8px; background: #eee9df; border-radius: 99px; overflow: hidden; margin-top: 8px; }
+  .sblock .meter > i { display: block; height: 100%; background: var(--avoid); transition: width .5s; }
+  .sblock.ok .meter > i { background: var(--want); }
+  .sblock .mp { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .sblock.ok { border-color: #b9dcc4; }
+  .sblock.lead { border-color: #d4a72c; box-shadow: 0 0 0 3px #f3e2a9; transform: translateY(-2px); }
+  .sblock.lead::before { content: "👑 유력"; position: absolute; top: -11px; right: 10px; background: #d4a72c; color: #fff;
+                         font-size: 12px; font-weight: 800; padding: 2px 8px; border-radius: 99px; }
+  .sblock.out { opacity: .38; }
+  .sblock.out .nm { text-decoration: line-through; }
+  .sblock.fresh { animation: pop .6s; }
+  .sblock.new::after { content: "NEW"; position: absolute; top: -10px; left: 10px; background: var(--accent); color: #fff;
+                         font-size: 11px; font-weight: 800; padding: 2px 7px; border-radius: 99px; }
+  @keyframes pop { 0% { transform: scale(.85); opacity: 0; } 70% { transform: scale(1.04); } 100% { transform: none; opacity: 1; } }
+  @keyframes bump { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
+  .med { background: #eef2fa; border: 1px solid #c9d5ee; color: #34497a; border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; font-weight: 600; }
+  .med .dot { display: inline-block; animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: .2; } }
+  #timeline div { padding: 8px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
+  .winner { text-align: center; padding: 26px 16px; }
+  .winner .big { font-size: 52px; font-weight: 800; margin: 6px 0; }
+  @media (max-width: 600px) { .winner .big { font-size: 34px; } }
 </style>
 </head>
 <body>
@@ -22,23 +53,42 @@
   <h1>📺 공용 화면 <span class="phase" id="phase">-</span></h1>
   <div class="sub" id="joinUrl"></div>
   <div class="notice hidden" id="notice"></div>
-  <div class="grid">
-    <div class="card">
-      <div class="round" id="roundBar"></div>
-      <div class="sub" style="margin:0" id="counts">-</div>
-      <div class="big" id="top">아직 비밀 입력 중…</div>
-      <div class="tags" id="tags"></div>
-      <div class="stat" id="minSat"></div>
-      <div class="stat" id="likes"></div>
-      <p class="hint" id="next"></p>
-      <div class="row" style="margin-top:12px">
-        <button class="sec" id="startBtn" disabled>입력 마감하고 시작</button>
-        <button class="sec" id="finishBtn">시간 종료 · 확정</button>
+  <div class="layout">
+    <div>
+      <div class="bar hidden" id="bar">
+        <span class="timer" id="timer"></span>
+        <span class="lead" id="lead"></span>
+        <span class="wait" id="wait"></span>
       </div>
-      <p class="hint" id="startHint">3명 이상 제출해야 시작할 수 있어요 (지금 0명)</p>
+      <div class="med hidden" id="med">🤖 AI 중재자가 누군가와 조용히 이야기하는 중<span class="dot">…</span> (누구인지는 아무도 몰라요)</div>
+
+      <div class="card" id="inputCard">
+        <div class="sub" style="margin:0" id="counts">-</div>
+        <div style="font-size:34px;font-weight:800;margin:6px 0">아직 비밀 입력 중…</div>
+        <div class="row" style="margin-top:12px;max-width:420px">
+          <button class="sec" id="startBtn" disabled>입력 마감하고 시작</button>
+        </div>
+        <p class="hint" id="startHint">3명 이상 제출해야 시작할 수 있어요 (지금 0명)</p>
+      </div>
+
+      <div class="card winner hidden" id="winnerCard">
+        <div class="sub" style="margin:0">✅ 확정</div>
+        <div class="big" id="winnerName"></div>
+        <div class="tags" id="winnerTags"></div>
+        <p class="hint" id="winnerReason" style="font-size:15px"></p>
+      </div>
+
+      <div id="boardWrap" class="hidden">
+        <div class="board" id="board"></div>
+        <div class="row" style="margin-top:14px;max-width:420px">
+          <button class="sec" id="finishBtn">지금 확정하기</button>
+        </div>
+        <p class="hint" id="rule"></p>
+      </div>
     </div>
     <div class="card">
       <h2>AI 판단 타임라인 (이름 없이)</h2>
+      <div class="sub" style="margin:0 0 6px" id="people"></div>
       <div id="timeline"></div>
     </div>
   </div>
@@ -48,13 +98,19 @@ const room = new URLSearchParams(location.search).get("room") || "lunch";
 const MIN_PEOPLE = 3; // 서버 RoomService.MIN_PEOPLE과 같은 값 (2명이면 상대 조건이 드러나서 익명이 깨진다)
 const $ = id => document.getElementById(id);
 $("joinUrl").textContent = `폰으로 접속: ${location.origin}/?room=${room}`;
-let lastVersion = -1, phase = "INPUT", round = 0, roundDeadline = 0, reacted = 0, joined = 0;
-function renderRound() {
-  if (phase !== "NEGOTIATE") { $("roundBar").textContent = ""; return; }
-  const left = Math.max(0, Math.ceil((roundDeadline - Date.now()) / 1000));
-  $("roundBar").textContent = `라운드 ${round}  ·  ⏱ ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}  ·  반응 ${reacted} / ${joined}`;
+let lastVersion = -1, phase = "INPUT", deadline = 0;
+// 블록 자리는 처음 나타난 순서로 고정 → 순위가 바뀌어도 블록이 움직이지 않는다 (👑만 옮겨 간다)
+const order = [];
+const prevLikes = new Map();
+
+function renderTimer() {
+  if (phase !== "NEGOTIATE") return;
+  const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+  $("timer").textContent = deadline ? `⏱ ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "⏱ 진행 중";
+  $("timer").classList.toggle("urgent", deadline > 0 && left <= 15);
 }
-setInterval(renderRound, 250);
+setInterval(renderTimer, 250);
+
 const client = new StompJs.Client({ brokerURL: (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws", reconnectDelay: 2000 });
 client.onConnect = () => client.subscribe("/topic/room/" + room, m => render(JSON.parse(m.body)));
 client.activate();
@@ -62,29 +118,74 @@ const send = what => client.publish({ destination: `/app/room/${room}/${what}`, 
 $("startBtn").onclick = () => send("start");
 $("finishBtn").onclick = () => send("finish");
 
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
 function render(v) {
   if (v.version < lastVersion) return;
-  lastVersion = v.version;
-  phase = v.phase; round = v.round; reacted = v.reactedCount; joined = v.active;
-  roundDeadline = Date.now() + v.roundRemainingMs;
-  renderRound();
-  $("phase").textContent = { INPUT: "① 비밀 입력", NEGOTIATE: "② 조율 중", DONE: "③ 확정" }[v.phase];
-  $("counts").textContent = v.phase === "INPUT" ? `참가 ${v.joined}명 · 제출 ${v.submitted}명` : `참가 ${v.joined}명 · 남은 후보 ${v.remaining}곳 · v${v.version}`;
-  if (v.phase === "INPUT") { $("top").textContent = "아직 비밀 입력 중…"; $("tags").textContent = ""; $("minSat").textContent = ""; $("likes").textContent = ""; $("next").textContent = ""; }
-  else if (v.top) {
-    $("top").textContent = (v.phase === "DONE" ? "✅ " : "") + v.top.name;
-    $("tags").textContent = `${v.top.tags.join(" · ")} · ${v.top.price.toLocaleString()}원 · 도보 ${v.top.walkMin}분`;
-    $("minSat").textContent = `가장 덜 만족한 사람도 ${v.minSatisfactionPercent}%`;
-    $("likes").textContent = `👍 ${v.likesOnTop} / ${v.active}`;
-    $("next").textContent = v.nextUp.length ? "다음 후보: " + v.nextUp.map(p => p.name).join(", ") : "";
-  } else { $("top").textContent = "맞는 곳이 없어요"; $("tags").textContent = ""; $("minSat").textContent = ""; }
-  const t = $("timeline"); t.replaceChildren();
-  v.timeline.forEach(line => { const d = document.createElement("div"); d.textContent = line; t.appendChild(d); });
-  const n = $("notice"); n.classList.toggle("hidden", !v.notice); n.textContent = v.notice || "";
+  lastVersion = v.version; phase = v.phase;
+  deadline = v.remainingMs ? Date.now() + v.remainingMs : 0;
+  $("phase").textContent = { INPUT: "① 비밀 입력", NEGOTIATE: "② 실시간 조율", DONE: "③ 확정" }[v.phase];
+  $("people").textContent = `참가 ${v.joined}명` + (v.active < v.joined ? ` (연결 끊김 ${v.joined - v.active}명)` : "");
+  $("counts").textContent = `참가 ${v.joined}명 · 제출 ${v.submitted}명`;
+  $("inputCard").classList.toggle("hidden", v.phase !== "INPUT");
+  $("bar").classList.toggle("hidden", v.phase !== "NEGOTIATE");
+  $("boardWrap").classList.toggle("hidden", v.phase === "INPUT");
+  $("finishBtn").parentElement.classList.toggle("hidden", v.phase !== "NEGOTIATE");
+  $("winnerCard").classList.toggle("hidden", v.phase !== "DONE");
+  $("med").classList.toggle("hidden", !(v.phase === "NEGOTIATE" && v.mediating));
   const tooFew = v.phase === "INPUT" && v.submitted < MIN_PEOPLE;
-  $("startBtn").disabled = v.phase !== "INPUT" || tooFew; $("finishBtn").disabled = v.phase !== "NEGOTIATE";
+  $("startBtn").disabled = v.phase !== "INPUT" || tooFew;
   $("startHint").classList.toggle("hidden", !tooFew);
   $("startHint").textContent = `${MIN_PEOPLE}명 이상 제출해야 시작할 수 있어요 (지금 ${v.submitted}명)`;
+  $("rule").textContent = `막대 = 그 후보에서 가장 덜 만족한 사람의 만족도. ${v.floorPercent}% 이상(초록)인 후보 중 👍가 가장 많은 곳으로 정해요.`;
+
+  if (v.phase !== "INPUT") {
+    const leader = v.board.find(b => b.place.id === v.leaderId);
+    $("lead").textContent = leader ? `👑 유력: ${leader.place.name}` : "맞는 곳이 아직 없어요";
+    $("wait").textContent = v.undecidedOnLeader > 0
+      ? `🤔 유력 후보에 아직 고민 중 ${v.undecidedOnLeader}명` + (v.extended ? " · 연장 중" : "")
+      : (leader ? "모두 유력 후보에 의견을 냈어요" : "");
+    renderTimer();
+    renderBoard(v);
+  }
+  if (v.winner) {
+    $("winnerName").textContent = v.winner.name;
+    $("winnerTags").textContent = `${v.winner.tags.join(" · ")} · ${v.winner.price.toLocaleString()}원 · 도보 ${v.winner.walkMin}분`;
+    $("winnerReason").textContent = v.winnerReason || "";
+  }
+  const t = $("timeline"); t.replaceChildren();
+  v.timeline.forEach(line => t.appendChild(el("div", null, line)));
+  const n = $("notice"); n.classList.toggle("hidden", !v.notice); n.textContent = v.notice || "";
+}
+
+function renderBoard(v) {
+  const firstTime = new Set(); // 이 화면에 처음 나타난 블록만 등장 애니메이션 (다시 그릴 때마다 반복하지 않게)
+  v.board.forEach(b => { if (!order.includes(b.place.id)) { order.push(b.place.id); firstTime.add(b.place.id); } });
+  const byId = new Map(v.board.map(b => [b.place.id, b]));
+  const box = $("board"); box.replaceChildren();
+  order.forEach(id => {
+    const b = byId.get(id);
+    if (!b) return;
+    const cls = ["sblock"];
+    if (b.out) cls.push("out"); else if (b.qualified) cls.push("ok");
+    if (id === v.leaderId && v.phase === "NEGOTIATE") cls.push("lead");
+    if (v.winner && id === v.winner.id) cls.push("lead");
+    if (b.fresh) cls.push("new");
+    if (b.fresh && firstTime.has(id) && order.length > firstTime.size) cls.push("fresh");
+    const card = el("div", cls.join(" "));
+    card.appendChild(el("div", "nm", b.place.name));
+    card.appendChild(el("div", "tg", b.out ? "빠짐" : `${b.place.tags.join(" · ")} · ${b.place.price.toLocaleString()}원`));
+    const likes = el("div", "likes", `👍 ${b.likes}`);
+    if (prevLikes.has(id) && prevLikes.get(id) !== b.likes) likes.classList.add("bump");
+    prevLikes.set(id, b.likes);
+    card.appendChild(likes);
+    if (!b.out) {
+      const meter = el("div", "meter"); const fill = el("i"); fill.style.width = `${b.minPercent}%`; meter.appendChild(fill);
+      card.appendChild(meter);
+      card.appendChild(el("div", "mp", `가장 덜 만족한 사람 ${b.minPercent}%`));
+    }
+    box.appendChild(card);
+  });
 }
 </script>
 </body>

@@ -19,6 +19,8 @@ repositories {
 
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-websocket")
+    // AI 중재자 (Claude Haiku). 키는 환경변수 ANTHROPIC_API_KEY로만 받는다
+    implementation("com.anthropic:anthropic-java:3.2.0")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

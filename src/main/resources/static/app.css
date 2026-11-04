@@ -30,7 +30,26 @@ button:disabled { opacity: .45; cursor: default; }
 .tags { color: var(--muted); font-size: 14px; }
 .notice { background: #fff6f4; border: 1px solid #e8c9c4; color: #8a3a2c; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 14px; }
 .ok { color: var(--want); font-weight: 700; }
-.hidden { display: none; }
+.hidden { display: none !important; }
 .round { background: var(--text); color: #fff; border-radius: 12px; padding: 10px 14px; font-weight: 700; margin-bottom: 12px; font-variant-numeric: tabular-nums; }
 .round:empty { display: none; }
 .parsed div { font-size: 14px; margin: 3px 0; }
+/* 실시간 조율 (폰) */
+.round.urgent { background: var(--never); }
+.txt { font: inherit; padding: 9px; border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+.big-btn { padding: 14px 10px !important; font-size: 16px !important; font-weight: 700; }
+.now-card.slide { animation: slidein .35s ease-out; }
+@keyframes slidein { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+.blocks { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.block { text-align: left; font: inherit; border: 1.5px solid var(--line); background: #fff; border-radius: 10px; padding: 8px 10px; cursor: pointer; }
+.block .bname { font-weight: 700; font-size: 14px; }
+.block .bmark { font-size: 13px; margin-top: 2px; }
+.block.up { border-color: var(--want); background: #e9f5ec; }
+.block.down { border-color: var(--never); background: #fbe9e6; }
+.block.out { opacity: .45; text-decoration: line-through; cursor: default; }
+.mediator { border: 2px solid var(--accent); background: #f3f6fc; }
+.mediator.pop { animation: slidein .4s ease-out; }
+.med-head { font-weight: 800; color: var(--accent); margin-bottom: 6px; }
+.med-text { font-size: 16px; margin: 0 0 10px; }
+.med-lines { margin: 0 0 10px; padding-left: 18px; font-size: 14px; }
+.ok-btn { border-color: var(--want) !important; color: var(--want); font-weight: 700; }

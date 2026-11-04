@@ -127,6 +127,32 @@ public final class Engine {
         return new Scored(r, sat, min, avg);
     }
 
+    /** 최종 결정: 무엇으로, 왜 */
+    public record Decision(Scored pick, boolean qualified, int likes) {
+    }
+
+    /**
+     * 마지막 결정 규칙.
+     * 1) "가장 덜 만족한 사람도 floor 이상"인 후보만 자격이 있다 (👎는 그 사람 만족도를 깎으므로, 다수가 한 명을 밀어붙이기 어렵다)
+     * 2) 자격 있는 후보 중 👍가 가장 많은 곳. 동점이면 공정 순서(최저 만족도 → 평균 → id)
+     * 3) 자격 있는 곳이 없으면 공정 순서 1등 (지금까지의 maximin)
+     */
+    public static Decision decide(Result result, Map<Integer, Integer> likeCounts, double floor) {
+        Scored best = null;
+        int bestLikes = -1;
+        for (Scored s : result.ranking()) { // ranking은 이미 공정 순서 → 먼저 나온 쪽이 동점 승자
+            if (s.min() + 1e-9 < floor) continue;
+            int likes = likeCounts.getOrDefault(s.restaurant().id(), 0);
+            if (likes > bestLikes) {
+                best = s;
+                bestLikes = likes;
+            }
+        }
+        if (best != null) return new Decision(best, true, bestLikes);
+        Scored top = result.top();
+        return new Decision(top, false, top == null ? 0 : likeCounts.getOrDefault(top.restaurant().id(), 0));
+    }
+
     private static List<String> notes(int[] step) {
         List<String> n = new ArrayList<>();
         if (step[0] > 0) n.add("거리 기준을 " + step[0] + "분 넓혔어요");

@@ -78,6 +78,12 @@ public class RoomController {
         rooms.relax(roomId, who.getName(), msg.tag());
     }
 
+    /** AI 중재 질문에 대한 답 (버튼 또는 자유 답변). 자유 답변 원문은 AI에 한 번 보내고 저장하지 않는다 */
+    @MessageMapping("/room/{roomId}/mediate")
+    public void mediate(@DestinationVariable String roomId, RoomService.MediateMsg msg, Principal who) {
+        rooms.mediate(roomId, who.getName(), msg);
+    }
+
     @MessageMapping("/room/{roomId}/allergy-check")
     public void allergyCheck(@DestinationVariable String roomId, Principal who) {
         rooms.requestAllergyCheck(roomId, who.getName());
