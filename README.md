@@ -4,7 +4,7 @@
 데모 상황: 팀 점심 / 회식 장소 정하기 (식당은 가상 15곳).
 
 - 조사·테스트 결과: [docs/research.md](docs/research.md)
-- 흐름도: [docs/images/flow.png](docs/images/flow.png)
+- 흐름도: 발표 덱 4번 "한 장으로 보는 흐름" (`docs/images/flow.png`는 라운드제 시절 그림)
 
 ## 실행
 
