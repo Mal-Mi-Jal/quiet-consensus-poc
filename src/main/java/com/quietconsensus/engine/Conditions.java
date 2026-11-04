@@ -79,6 +79,21 @@ public record Conditions(Set<String> allergy, Set<String> allergyOther, Set<Stri
         return this;
     }
 
+    /** "절대 안 됨" 하나를 아예 지운 사본 — 중재 질문에 "상관없어요"라고 답했을 때 (알레르기는 대상이 아니다) */
+    public Conditions drop(String item) {
+        if (mustNot.contains(item)) {
+            Set<String> m = new LinkedHashSet<>(mustNot);
+            m.remove(item);
+            return new Conditions(allergy, allergyOther, m, preferNot, want, dishNever, dishAvoid, dishWant, maxPrice);
+        }
+        if (dishNever.contains(item)) {
+            Set<String> n = new LinkedHashSet<>(dishNever);
+            n.remove(item);
+            return new Conditions(allergy, allergyOther, mustNot, preferNot, want, n, dishAvoid, dishWant, maxPrice);
+        }
+        return this;
+    }
+
     /** "절대 안 됨" 전부 (태그 + 메뉴) — 후보가 0개일 때 풀어 줄 수 있는 것들 */
     public Set<String> relaxable() {
         Set<String> all = new LinkedHashSet<>(mustNot);

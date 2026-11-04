@@ -35,4 +35,6 @@ tasks.withType<Test> {
     // -Dollama=true 로 실행하면 LLM 평가 테스트가 켜진다
     systemProperty("ollama", System.getProperty("ollama", "false"))
     systemProperty("evalSet", System.getProperty("evalSet", "all"))
+    // -Dclaude=true 로 실행하면 AI 중재자 평가가 실제 Claude Haiku를 부른다 (유료, 약 14번)
+    systemProperty("claude", System.getProperty("claude", "false"))
 }

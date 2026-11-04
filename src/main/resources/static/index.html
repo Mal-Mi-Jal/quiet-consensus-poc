@@ -65,7 +65,8 @@
       <p id="medText" class="med-text"></p>
       <div id="medAsk">
         <div class="row">
-          <button class="sec ok-btn" id="medRelax">괜찮아요, 풀게요</button>
+          <button class="sec ok-btn" id="medOk">상관없어요</button>
+          <button class="sec" id="medSoften">가능하면 피할게요</button>
           <button class="sec" id="medKeep">그대로 둘게요</button>
         </div>
         <div class="row" style="margin-top:8px">
@@ -320,7 +321,8 @@ $("submitBtn").onclick = () => { submitted = true; send("submit", conditions());
 $("upBtn").onclick = () => cardId && send("react", { restaurantId: cardId, up: true });
 $("downBtn").onclick = () => cardId && send("react", { restaurantId: cardId, up: false });
 $("vetoBtn").onclick = () => cardId && confirm("거부권은 1장뿐이에요. 이 후보를 모두의 후보에서 뺄까요?") && send("veto", { restaurantId: cardId, up: false });
-$("medRelax").onclick = () => mediate("relax");
+$("medOk").onclick = () => mediate("ok");
+$("medSoften").onclick = () => mediate("soften");
 $("medKeep").onclick = () => mediate("keep");
 $("medSend").onclick = () => { const t = $("medInput").value.trim(); if (t) mediate("text", t); };
 $("medApply").onclick = () => mediate("apply");

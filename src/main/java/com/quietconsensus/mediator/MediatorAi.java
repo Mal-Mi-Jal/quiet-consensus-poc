@@ -19,18 +19,29 @@ public interface MediatorAi {
                     + before + "곳 → " + after + "곳으로 늘어나요";
         }
 
-        /** AI 문장 검사: 코드가 센 숫자가 그대로 들어 있어야 하고, 너무 길면 안 된다 */
+        /** AI 문장 검사: 코드가 센 숫자가 그대로 들어 있어야 하고, 다른 숫자는 없어야 하고, 너무 길면 안 된다 */
         public boolean accepts(String text) {
-            return text != null && !text.isBlank() && text.length() <= 140
-                    && text.contains(after + "곳") && !text.contains("알레르기");
+            if (text == null || text.isBlank() || text.length() > 140
+                    || !text.contains(after + "곳") || text.contains("알레르기")) return false;
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\d+").matcher(text);
+            while (m.find()) {
+                String n = m.group();
+                if (!n.equals(String.valueOf(before)) && !n.equals(String.valueOf(after))) return false;
+            }
+            return true;
         }
     }
 
-    enum Action { RELAX, KEEP, UNCLEAR }
+    /**
+     * OK: "괜찮아요/상관없어요" → 그 "절대 안 됨"을 아예 지운다
+     * SOFTEN: "웬만하면 피하고 싶지만 양보" → "가능하면 피함"으로 내린다
+     * KEEP: 여전히 안 된다 (알레르기·건강 이야기 포함) · UNCLEAR: 판단 불가 → 버튼으로 다시 고르게
+     */
+    enum Action { OK, SOFTEN, KEEP, UNCLEAR }
 
     /**
      * 자유 답변 해석 결과. 조건은 "완화" 방향으로만 바꿀 수 있다:
-     * action=RELAX → 그 항목을 "절대 안 됨"에서 "가능하면 피함"으로,
+     * action=OK → 그 항목을 지운다, SOFTEN → "절대 안 됨"에서 "가능하면 피함"으로,
      * avoid/want → 태그 목록 안에서만 "가능하면 피함"/"먹고 싶음" 추가. "절대 안 됨"을 새로 만들 수는 없다.
      */
     record Reply(Action action, List<String> avoid, List<String> want) {

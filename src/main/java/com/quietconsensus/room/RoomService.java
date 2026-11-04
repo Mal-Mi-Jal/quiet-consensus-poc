@@ -27,8 +27,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 방 관리. 핵심 규칙:
@@ -50,7 +48,6 @@ public class RoomService {
     public static final int MIN_PEOPLE = 3;
     public static final int MAX_PEOPLE = 8;
     private static final long FRESH_MS = 6000;
-    private static final Pattern NUMBER = Pattern.compile("\\d+");
 
     /**
      * negotiateMs: 조율 제한시간(0이면 타이머 없음) · extendMs: 고민 중인 사람이 있을 때 한 번 연장하는 시간
@@ -364,7 +361,8 @@ public class RoomService {
 
     /**
      * 중재 질문에 대한 답.
-     * relax: "괜찮아요" 버튼 → 그 항목을 바로 "가능하면 피함"으로 (버튼 자체가 확인)
+     * ok: "상관없어요" 버튼 → 그 "절대 안 됨"을 지운다 (버튼 자체가 확인)
+     * soften: "가능하면 피할게요" 버튼 → "가능하면 피함"으로 내린다
      * keep: "그대로 둘게요" → 아무것도 안 바꾼다
      * text: 자유 답변 → AI가 "이렇게 바꿀까요?" 제안으로 정리 → 본인이 apply를 눌러야 반영
      * apply / cancel: 제안 적용 / 취소
@@ -379,7 +377,8 @@ public class RoomService {
                     || !q.id.equals(msg.questionId()) || "WAITING".equals(q.state)) return;
             room.version++;
             switch (String.valueOf(msg.choice())) {
-                case "relax" -> applyChange(room, p, p.conditions.relax(q.blocker.item()), null);
+                case "ok" -> applyChange(room, p, p.conditions.drop(q.blocker.item()), null);
+                case "soften" -> applyChange(room, p, p.conditions.relax(q.blocker.item()), null);
                 case "keep" -> {
                     room.question = null;
                     p.notice = "알겠어요, ‘" + q.blocker.item() + "’은(는) 그대로 둘게요 🙂";
@@ -462,7 +461,7 @@ public class RoomService {
             boolean sameNumbers = fresh.before() == q.blocker.before() && fresh.after() == q.blocker.after();
             q.blocker = fresh;
             MediatorAi.Facts f = facts(fresh);
-            boolean ok = sameNumbers && f.accepts(aiText) && onlyKnownNumbers(aiText, f);
+            boolean ok = sameNumbers && f.accepts(aiText);
             q.text = ok ? aiText.trim() : f.defaultQuestion();
             q.byAi = ok;
             q.state = "ASKING";
@@ -488,7 +487,10 @@ public class RoomService {
             Conditions c = p.conditions;
             List<String> lines = new ArrayList<>();
             if (r != null) {
-                if (r.action() == MediatorAi.Action.RELAX && c.relaxable().contains(item)) {
+                if (r.action() == MediatorAi.Action.OK && c.relaxable().contains(item)) {
+                    c = c.drop(item); // "괜찮아요" = 조건 자체가 없어진다 (피함으로 남기면 만족도가 계속 깎인다)
+                    lines.add("‘" + item + "’: 절대 안 됨 → 상관없음");
+                } else if (r.action() == MediatorAi.Action.SOFTEN && c.relaxable().contains(item)) {
                     c = c.relax(item);
                     lines.add("‘" + item + "’: 절대 안 됨 → 가능하면 피함");
                 }
@@ -635,16 +637,6 @@ public class RoomService {
 
     private static MediatorAi.Facts facts(Blockers.Blocker b) {
         return new MediatorAi.Facts(b.item(), b.dish(), b.before(), b.after());
-    }
-
-    /** AI 문장에 나온 숫자는 코드가 준 숫자(before, after)뿐이어야 한다 */
-    private static boolean onlyKnownNumbers(String text, MediatorAi.Facts f) {
-        Matcher m = NUMBER.matcher(text);
-        while (m.find()) {
-            String n = m.group();
-            if (!n.equals(String.valueOf(f.before())) && !n.equals(String.valueOf(f.after()))) return false;
-        }
-        return true;
     }
 
     private static int candidateCount(Room room) {

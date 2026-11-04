@@ -344,7 +344,7 @@ class RoomServiceTest {
                             case 3 -> s.submit("r", key, rnd.nextBoolean() ? want(tag) : never(tag)); // 중재도 같이 돈다
                             case 4 -> {
                                 Room.Question q = s.room("r").question; // 락 밖에서 읽는 건 일부러 (오래된 id로 답해도 안전해야 한다)
-                                if (q != null) s.mediate("r", key, new RoomService.MediateMsg(q.id, rnd.nextBoolean() ? "relax" : "keep", null));
+                                if (q != null) s.mediate("r", key, new RoomService.MediateMsg(q.id, new String[]{"ok", "soften", "keep"}[rnd.nextInt(3)], null));
                             }
                             default -> s.react("r", key, id, true);
                         }
@@ -488,37 +488,49 @@ class RoomServiceTest {
     }
 
     @Test
-    void 괜찮아요를_누르면_바로_반영되고_후보가_늘어난다() {
+    void 상관없어요를_누르면_조건이_지워지고_후보가_늘어난다() {
         Capture cap = new Capture();
         RoomService s = stuckRoom(cap, new FakeAi());
         String qid = cap.lastPrivate("p1").mediator().id();
-        s.mediate("r", "p1", new RoomService.MediateMsg(qid, "relax", null));
+        s.mediate("r", "p1", new RoomService.MediateMsg(qid, "ok", null));
 
         assertThat(liveIds(cap.lastPublic())).hasSize(6);
-        assertThat(s.room("r").people.get("p1").conditions.preferNot()).contains("밥");
+        Conditions c = s.room("r").people.get("p1").conditions;
+        assertThat(c.mustNot()).containsExactly("튀김");
+        assertThat(c.preferNot()).doesNotContain("밥"); // 피함으로도 남지 않는다 → 밥집에서 만족도가 깎이지 않음
         assertThat(cap.lastPublic().timeline()).anyMatch(l -> l.contains("2곳 → 6곳"));
         assertThat(cap.lastPublic().board().stream().filter(Views.Block::fresh)).hasSize(4); // 새로 생긴 4곳 표시
+    }
+
+    @Test
+    void 가능하면_피할게요를_누르면_피함으로_내려간다() {
+        Capture cap = new Capture();
+        RoomService s = stuckRoom(cap, new FakeAi());
+        String qid = cap.lastPrivate("p1").mediator().id();
+        s.mediate("r", "p1", new RoomService.MediateMsg(qid, "soften", null));
+        assertThat(liveIds(cap.lastPublic())).hasSize(6);
+        assertThat(s.room("r").people.get("p1").conditions.preferNot()).contains("밥");
     }
 
     @Test
     void 자유_답변은_제안으로_보여주고_적용을_눌러야_반영한다() {
         Capture cap = new Capture();
         FakeAi ai = new FakeAi();
-        ai.reply = new MediatorAi.Reply(MediatorAi.Action.RELAX, List.of("국물", "없는태그"), List.of());
+        ai.reply = new MediatorAi.Reply(MediatorAi.Action.OK, List.of("국물", "없는태그"), List.of());
         RoomService s = stuckRoom(cap, ai);
         String qid = cap.lastPrivate("p1").mediator().id();
 
         s.mediate("r", "p1", new RoomService.MediateMsg(qid, "text", "밥은 점심엔 괜찮은데 국물은 좀 별로예요"));
         Views.Mediator m = cap.lastPrivate("p1").mediator();
         assertThat(m.state()).isEqualTo("PROPOSAL");
-        assertThat(m.proposal()).containsExactly("‘밥’: 절대 안 됨 → 가능하면 피함", "‘국물’: 가능하면 피함 추가");
+        assertThat(m.proposal()).containsExactly("‘밥’: 절대 안 됨 → 상관없음", "‘국물’: 가능하면 피함 추가");
         assertThat(m.proposalAfter()).isEqualTo(6);
         assertThat(s.room("r").people.get("p1").conditions.mustNot()).contains("밥"); // 아직 안 바뀜
 
         s.mediate("r", "p1", new RoomService.MediateMsg(qid, "apply", null));
         Conditions c = s.room("r").people.get("p1").conditions;
         assertThat(c.mustNot()).containsExactly("튀김");
-        assertThat(c.preferNot()).containsExactlyInAnyOrder("밥", "국물");
+        assertThat(c.preferNot()).containsExactly("국물"); // 밥은 "괜찮다" → 피함으로도 안 남는다
     }
 
     @Test
@@ -541,7 +553,7 @@ class RoomServiceTest {
         Capture cap = new Capture();
         RoomService s = stuckRoom(cap, new FakeAi());
         String qid = cap.lastPrivate("p1").mediator().id();
-        s.mediate("r", "p0", new RoomService.MediateMsg(qid, "relax", null));
+        s.mediate("r", "p0", new RoomService.MediateMsg(qid, "ok", null));
         assertThat(s.room("r").people.get("p1").conditions.mustNot()).contains("밥");
         assertThat(liveIds(cap.lastPublic())).hasSize(2);
     }
