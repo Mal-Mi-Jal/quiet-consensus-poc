@@ -147,4 +147,45 @@ class EngineTest {
         var without = rank(Map.of("a", Conditions.empty(), "b", Conditions.empty(), "c", Conditions.empty()));
         assertThat(withNut.ranking()).hasSameSizeAs(without.ranking());
     }
+
+    // ---------------------------------------------------------------- 결정 규칙: 하한을 넘는 곳이 없을 때
+
+    private static Engine.Scored scored(int id, double min) {
+        return new Engine.Scored(MockRestaurants.byId(id), Map.of(), min, min);
+    }
+
+    /** 공정 순서(최저 만족도 → 평균 → id)대로 정렬된 결과 */
+    private static Engine.Result result(Engine.Scored... s) {
+        List<Engine.Scored> list = new ArrayList<>(List.of(s));
+        list.sort(Engine.FAIR_ORDER);
+        return new Engine.Result(List.copyOf(list), MockRestaurants.BASE_WALK, 0, List.of(), false);
+    }
+
+    @Test
+    void 하한을_넘는_곳이_없으면_최저_만족도가_비슷한_곳_중_좋아요가_많은_곳() {
+        // 2026-11-05 직접 4명으로 해 보니: 아무도 👍하지 않은 곳(최저 20%)이 확정돼서 어색했다
+        var r = result(scored(1, 0.20), scored(4, 0.15), scored(8, 0.05));
+        var d = Engine.decide(r, Map.of(1, 0, 4, 3, 8, 4), 0.5);
+        assertThat(d.qualified()).isFalse();
+        assertThat(d.pick().restaurant().id()).isEqualTo(4); // 20%와 5%p 차이 → 👍 3개인 곳
+        assertThat(d.likes()).isEqualTo(3);
+        // 👍 4개라도 최저 만족도가 1등보다 10%p 넘게 낮으면(5%) 뽑히지 않는다 — 한 명을 밀어붙이지 않기
+    }
+
+    @Test
+    void 비슷한_곳에_좋아요가_하나도_없으면_예전처럼_가장_덜_만족한_사람_기준() {
+        var r = result(scored(1, 0.20), scored(4, 0.15), scored(8, 0.0));
+        var d = Engine.decide(r, Map.of(8, 3), 0.5);
+        assertThat(d.qualified()).isFalse();
+        assertThat(d.pick().restaurant().id()).isEqualTo(1);
+        assertThat(d.likes()).isZero();
+    }
+
+    @Test
+    void 하한을_넘는_곳이_있으면_규칙은_그대로() {
+        var r = result(scored(1, 0.6), scored(4, 0.55), scored(8, 0.2));
+        var d = Engine.decide(r, Map.of(4, 2, 8, 4), 0.5);
+        assertThat(d.qualified()).isTrue();
+        assertThat(d.pick().restaurant().id()).isEqualTo(4);
+    }
 }

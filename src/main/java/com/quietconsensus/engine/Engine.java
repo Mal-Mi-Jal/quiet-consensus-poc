@@ -131,26 +131,40 @@ public final class Engine {
     public record Decision(Scored pick, boolean qualified, int likes) {
     }
 
+    /** 하한을 넘는 곳이 없을 때, 공정 1등과 최저 만족도가 이만큼 이내면 "비슷하다"고 보고 👍로 고른다 (판단값, 아직 측정 안 함) */
+    public static final double FALLBACK_BAND = 0.10;
+
     /**
      * 마지막 결정 규칙.
      * 1) "가장 덜 만족한 사람도 floor 이상"인 후보만 자격이 있다 (👎는 그 사람 만족도를 깎으므로, 다수가 한 명을 밀어붙이기 어렵다)
      * 2) 자격 있는 후보 중 👍가 가장 많은 곳. 동점이면 공정 순서(최저 만족도 → 평균 → id)
-     * 3) 자격 있는 곳이 없으면 공정 순서 1등 (지금까지의 maximin)
+     * 3) 자격 있는 곳이 없으면: 공정 1등과 최저 만족도가 FALLBACK_BAND 이내인 곳 중 👍가 가장 많은 곳.
+     *    👍가 하나도 없으면 공정 1등 (maximin). 아무도 👍하지 않은 곳이 👍 받은 곳을 제치는 일을 줄이되,
+     *    최저 만족도가 크게 낮은 곳(누군가 크게 손해 보는 곳)은 👍가 많아도 뽑지 않는다.
      */
     public static Decision decide(Result result, Map<Integer, Integer> likeCounts, double floor) {
+        Scored best = pickMostLiked(result.ranking(), likeCounts, floor);
+        if (best != null) return new Decision(best, true, likeCounts.getOrDefault(best.restaurant().id(), 0));
+        Scored top = result.top();
+        if (top == null) return new Decision(null, false, 0);
+        Scored near = pickMostLiked(result.ranking(), likeCounts, top.min() - FALLBACK_BAND);
+        int likes = likeCounts.getOrDefault(near.restaurant().id(), 0);
+        return likes > 0 ? new Decision(near, false, likes) : new Decision(top, false, 0);
+    }
+
+    /** 최저 만족도가 minAtLeast 이상인 후보 중 👍 최다. ranking이 이미 공정 순서라 먼저 나온 쪽이 동점 승자 */
+    private static Scored pickMostLiked(List<Scored> ranking, Map<Integer, Integer> likeCounts, double minAtLeast) {
         Scored best = null;
         int bestLikes = -1;
-        for (Scored s : result.ranking()) { // ranking은 이미 공정 순서 → 먼저 나온 쪽이 동점 승자
-            if (s.min() + 1e-9 < floor) continue;
+        for (Scored s : ranking) {
+            if (s.min() + 1e-9 < minAtLeast) continue;
             int likes = likeCounts.getOrDefault(s.restaurant().id(), 0);
             if (likes > bestLikes) {
                 best = s;
                 bestLikes = likes;
             }
         }
-        if (best != null) return new Decision(best, true, bestLikes);
-        Scored top = result.top();
-        return new Decision(top, false, top == null ? 0 : likeCounts.getOrDefault(top.restaurant().id(), 0));
+        return best;
     }
 
     private static List<String> notes(int[] step) {

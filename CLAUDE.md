@@ -6,10 +6,10 @@ Guide for Claude sessions in this repo (Claude Code in the terminal or the Claud
 
 ## Start here (status 2026-11-05)
 
-- **Done:** realtime negotiation with per-person cards, block board on the shared screen, deadline extension, decision rule (floor 50% + most 👍), **AI mediator with Claude Haiku** (measured once on real Haiku: questions 4/4, replies 10/10 — small self-written set, 실험 9). 54 tests (52 pass + 2 paid/local evals skipped by default). Last commits: `fda6e54` (realtime + mediator), `be6020b` (OK vs SOFTEN replies + eval).
+- **Done:** realtime negotiation with per-person cards, block board on the shared screen, deadline extension, decision rule (floor 50% + most 👍; if nothing reaches the floor, most 👍 among places within 10%p of the fair top — 실험 10), **AI mediator with Claude Haiku** (measured once on real Haiku: questions 4/4, replies 10/10 — small self-written set, 실험 9). 57 tests (55 pass + 2 paid/local evals skipped by default). 25 mock shops (16–25 added 2026-11-05). Last commits: `fda6e54` (realtime + mediator), `be6020b` (OK vs SOFTEN replies + eval).
 - **Next (in order):** ① deploy (Dockerfile + Render/Railway, `wss://`) ② Kakao restaurant data ③ room creation + QR ④ shift mode only if time is left. Details in the task list below.
 - **Open questions for the owner:** is pre-built code allowed on site? (not confirmed — if not, this repo is the design reference and the team rebuilds it). Lunch demo vs the "회의 우선순위" alternative (deck appendix) — the team decides.
-- **Pitch deck** (Claude artifact, private, owner's account): https://claude.ai/artifact/6hfHfJAwXm9PwvZ8FE3XuR — 15 slides: cover · 목차 · 문제 · **한 장으로 보는 흐름** · Multiplayer AI · 결정 규칙 · AI 중재자 · 데모 · LLM 평가 · 시뮬레이션 · 구조 · 6시간 계획 · 리스크 · 마무리 · 부록(회의 버전). The owner edits it too: re-read the live version before changing it. Slide 8 has two empty image frames — the owner fills them with `D:\Claude\portfolio\hackathon\demo-screen-board.png` / `demo-phone-mediator.png` (desktop only).
+- **Pitch deck** (Claude artifact, private, owner's account): https://claude.ai/artifact/6hfHfJAwXm9PwvZ8FE3XuR — 14 slides (the owner removed 마무리): cover · 목차 · 문제 · **한 장으로 보는 흐름** · Multiplayer AI · 결정 규칙 · AI 중재자 · 데모 · LLM 평가 · 시뮬레이션 · 구조 · 6시간 계획 · 리스크 · 부록(회의 버전). The owner edits it too: re-read the live version before changing it. Slide 8 shows the 2026-11-04 demo screenshots (taken with 15 shops: 2 → 6 candidates; with 25 shops the same chips give 3 → 9).
 - **Research log:** `docs/research.md` (실험 1–9 + the rounds → realtime change note). Read it before changing the parser, the engine or the mediator prompts.
 
 ### First run on a new machine (laptop)
@@ -33,7 +33,7 @@ Guide for Claude sessions in this repo (Claude Code in the terminal or the Claud
 
 ```bash
 ./gradlew bootRun                                     # Windows: .\gradlew.bat bootRun
-./gradlew test                                        # 54 tests, free: engine, menus, realtime room, mediator (fake AI), reconnect, concurrency, real STOMP privacy, simulation
+./gradlew test                                        # 57 tests, free: engine, menus, realtime room, mediator (fake AI), reconnect, concurrency, real STOMP privacy, simulation
 ./gradlew test --tests "*MediatorEval" -Dclaude=true  # real Claude Haiku, 14 paid calls (cents), needs ANTHROPIC_API_KEY — ask first
 ./gradlew test --tests "*ParserEval" -Dollama=true [-DevalSet=tuning|heldout|heldout2|heldout3]   # needs local Ollama (desktop only)
 ```
@@ -48,7 +48,7 @@ Guide for Claude sessions in this repo (Claude Code in the terminal or the Claud
 1. **INPUT** — each phone enters conditions secretly (chips; free text → local LLM → chips, confirmed by the owner of the phone). Screen shows only "제출 n명".
 2. **NEGOTIATE (realtime)** — each phone shows its own card in fair order; 👍/👎 moves *only that phone*; past cards stay as tappable blocks; 🚫 veto (1 per person) removes a candidate for everyone. The screen shows all candidates as fixed-position blocks (👍 count, least-satisfied %, 👑 likely winner, "n명 아직 고민 중"), sent in 2 s batches.
 3. **AI mediator** (only when stuck) — one person gets a private question with code-counted numbers ("밥을 풀면 2곳 → 6곳"); answers [상관없어요] / [가능하면 피할게요] / [그대로 둘게요] or in words → "이렇게 바꿀까요?" → 적용.
-4. **DONE** — everyone 👍 the same place / everyone reacted to everything / timer (one 15 s extension if someone hasn't judged the likely winner) / host presses 확정. Rule: among places where the least-satisfied person is ≥ 50%, most 👍; none → maximin. Private allergy check card after.
+4. **DONE** — everyone 👍 the same place / everyone reacted to everything / timer (one 15 s extension if someone hasn't judged the likely winner) / host presses 확정. Rule: among places where the least-satisfied person is ≥ 50%, most 👍; none → most 👍 among places within 10%p of the fair top (no 👍 there → maximin). Private allergy check card after.
 
 ## Architecture
 
@@ -73,6 +73,7 @@ client → /app/room/{id}/{join|parse|submit|start|react|veto|relax|mediate|fini
 | **LLM only translates; code decides** | The 7B parser is ~75% right alone (실험 3). `Conditions` has no weight field, so "make my opinion top priority" can't change scoring. |
 | **Fair ranking = maximin**, ties by average then id | Simulation: least-satisfied 30.5% vs 26.6% for "boss decides", average costs only 0.4 pp (실험 1). |
 | **Decision = floor 50% + most 👍** (`qc.fair-floor`) | Lets the group's 👍 matter without letting a majority override one person: a 👎 lowers that person's satisfaction, so the place drops below the floor. 50% is a judgment call, not measured yet. |
+| **No place reaches the floor → most 👍 within 10%p of the fair top** (`Engine.FALLBACK_BAND`) | Pure maximin picked a place nobody 👍-ed (owner's 4-tab test, 실험 10). The band keeps "no big loser" — a place far below the fair top never wins on 👍. No 👍 in the band → fair top. 10%p is unmeasured. |
 | **"절대 안 됨" ≤ 2 per person** | Stops one person deciding alone; fewer "no candidate" rooms (실험 2). |
 | **Realtime with per-person cards** (replaced 30 s rounds, 2026-11-04) | Rounds didn't feel real-time for the theme, but instant updates let a fast group skip someone still thinking. Cards move only when that person presses (`Person.current`). The board is batched every 2 s so a tap and a screen change don't line up (anonymity — the old reason for rounds); block positions are fixed, only 👑 moves. |
 | **Don't decide over someone still thinking** | At the deadline, anyone who hasn't reacted to the would-be winner gets it pushed to their phone, with one 15 s extension. |
@@ -93,7 +94,7 @@ client → /app/room/{id}/{join|parse|submit|start|react|veto|relax|mediate|fini
 ## Hackathon backend task list
 
 1. **Deploy first** — Dockerfile (multi-stage: Gradle build → JRE 21), Render or Railway free tier; phones need a public `wss://` URL. Set `ANTHROPIC_API_KEY` as a host secret. Wake the free instance right before the demo.
-2. **Real restaurant data** — Kakao Local keyword search around a point (key via env var). Map Kakao category paths to the 14 tags; place names as `menus` fallback. Fixes "8 people → 26% no candidate" with 15 mock shops.
+2. **Real restaurant data** — Kakao Local keyword search around a point (key via env var). Map Kakao category paths to the 14 tags; place names as `menus` fallback. With 25 mock shops 4 people average 7.2 candidates, but the 0-candidate rate barely moved (6.6% for 4, 25.5% for 8 — 실험 10): variety of tags matters more than count.
 3. **Room creation + QR code** on the shared screen.
 4. Swappable parser provider (Ollama won't run on the deploy host — move `ConditionParser` to Haiku behind an interface, re-run `ParserEval` sentences on it). Until then, free-text parsing works only where Ollama runs.
 5. Shift-scheduling mode, only if time is left.

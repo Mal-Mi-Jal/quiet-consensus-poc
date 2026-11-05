@@ -607,6 +607,8 @@ public class RoomService {
         int floorPct = percent(cfg.floor());
         room.winnerReason = why != null ? why
                 : d.qualified() ? "가장 덜 만족한 사람도 " + floorPct + "% 이상인 후보 중 👍가 가장 많아요 (" + d.likes() + "개)"
+                : d.likes() > 0
+                ? floorPct + "%를 넘는 후보가 없어서, 가장 덜 만족한 사람 점수가 비슷한 곳 중 👍가 가장 많은 곳으로 (" + d.likes() + "개)"
                 : floorPct + "%를 넘는 후보가 없어서, 가장 덜 만족한 사람이 가장 만족하는 곳으로";
         room.log("✅ " + d.pick().restaurant().name() + "(으)로 확정! — " + room.winnerReason);
     }
