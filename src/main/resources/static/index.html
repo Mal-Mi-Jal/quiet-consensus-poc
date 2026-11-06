@@ -116,13 +116,29 @@
     <p class="hint">누르면 바로 반영돼요. 다른 사람이 빨리 눌러도 내 카드는 내가 누를 때만 넘어가요.</p>
   </section>
 
+  <!-- ③ 확정: 위는 모두가 보는 결과(공용 화면과 같은 공개 데이터), 아래는 나만 보는 것 -->
   <section id="done" class="hidden">
-    <div class="card"><div class="sub" style="margin:0">확정!</div><div class="top-name" id="doneName"></div>
-      <p class="hint" id="doneReason"></p><p id="doneSat" style="margin:6px 0 0"></p></div>
-    <div class="notice hidden" id="allergyCard">
-      <div id="allergyCheckText"></div>
-      <button class="sec" id="allergyRequestBtn" style="margin-top:10px">익명으로 단체에 확인 요청하기</button>
-      <p class="hint" style="margin:8px 0 0">누르면 공용 화면에 “확인이 필요한 알레르기가 있어요”가 이름 없이 떠요. 누르지 않으면 아무에게도 안 보여요.</p>
+    <div class="card done-card">
+      <div class="done-badge">🎉 확정!</div>
+      <div class="top-name" id="doneName"></div>
+      <div class="tags" id="doneTags"></div>
+      <div class="done-stats" id="doneStats"></div>
+      <p class="hint" id="doneReason"></p>
+    </div>
+    <details class="card others" id="doneOthers">
+      <summary id="doneOthersTitle">다른 후보 결과 보기</summary>
+      <div id="doneList"></div>
+      <p class="hint" id="doneOut"></p>
+      <p class="hint">공용 화면과 같은 결과예요. 누가 무엇을 눌렀는지는 공개되지 않아요.</p>
+    </details>
+    <div class="private-box">
+      <div class="private-head">🔒 나만 보여요</div>
+      <p id="doneSat" style="margin:0"></p>
+      <div class="notice hidden" id="allergyCard" style="margin:12px 0 0">
+        <div id="allergyCheckText"></div>
+        <button class="sec" id="allergyRequestBtn" style="margin-top:10px">익명으로 단체에 확인 요청하기</button>
+        <p class="hint" style="margin:8px 0 0">누르면 공용 화면에 “확인이 필요한 알레르기가 있어요”가 이름 없이 떠요. 누르지 않으면 아무에게도 안 보여요.</p>
+      </div>
     </div>
   </section>
 </div>
@@ -223,10 +239,33 @@ function onPublic(v) {
   $("negotiate").classList.toggle("hidden", v.phase !== "NEGOTIATE");
   $("done").classList.toggle("hidden", v.phase !== "DONE");
   if (v.phase === "INPUT" && submitted) $("status").textContent += " — 다른 사람을 기다리는 중";
-  if (v.winner) { $("doneName").textContent = v.winner.name; $("doneReason").textContent = v.winnerReason || ""; }
+  if (v.phase === "DONE" && v.winner) renderDone(v);
   if (v.notice) notice(v.notice);
 }
 const placeLine = p => `${p.tags.join(" · ")} · ${p.price.toLocaleString()}원 · 도보 ${p.walkMin}분`;
+const blockStats = b => `👍 ${b.likes} · 가장 덜 만족한 사람 ${b.minPercent}%${b.qualified ? " ✅" : ""}`;
+
+// 확정 결과: 공개 보드(이미 공용 화면에 나가는 데이터)만 쓴다 → 폰에 보여 줘도 새로 드러나는 정보가 없다
+function renderDone(v) {
+  const w = v.winner, wb = v.board.find(b => b.place.id === w.id);
+  $("doneName").textContent = w.name;
+  $("doneTags").textContent = placeLine(w);
+  $("doneStats").textContent = wb && wb.minPercent != null ? blockStats(wb) : "";
+  $("doneReason").textContent = v.winnerReason || "";
+  // 나머지 후보: 서버가 보낸 공정 순서(가장 덜 만족한 사람 기준) 그대로
+  const others = v.board.filter(b => !b.out && b.place.id !== w.id);
+  const out = v.board.filter(b => b.out).length;
+  $("doneOthers").classList.toggle("hidden", others.length === 0 && out === 0);
+  $("doneOthersTitle").textContent = `다른 후보 결과 보기 (${others.length}곳)`;
+  const list = $("doneList"); list.replaceChildren();
+  others.forEach((b, i) => {
+    const row = document.createElement("div"); row.className = "result-row";
+    const name = document.createElement("div"); name.className = "rname"; name.textContent = `${i + 2}. ${b.place.name}`;
+    const stat = document.createElement("div"); stat.className = "rstat"; stat.textContent = blockStats(b);
+    row.append(name, stat); list.appendChild(row);
+  });
+  $("doneOut").textContent = out ? `거부권으로 빠진 곳 ${out}곳` : "";
+}
 function onPrivate(p) {
   if (p.notice) notice(p.notice);
   if (p.submitted !== submitted) { // 새로고침하면 제출 여부를 서버가 알려 준다
@@ -235,7 +274,11 @@ function onPrivate(p) {
   }
   const c = p.card;
   const sat = c == null ? "" : c.myTotal === 0 ? "내 조건: 없음 (어디든 OK)" : `내 조건 ${c.myTotal}개 중 ${c.mySatisfied}개 맞아요 (나만 보여요)`;
-  if (p.phase === "DONE") { $("doneSat").textContent = sat; }
+  if (p.phase === "DONE") {
+    $("doneSat").textContent = c == null ? "" : c.myTotal === 0
+      ? "내 조건이 없어서 어디든 괜찮았어요"
+      : `확정된 곳에서 내 조건 ${c.myTotal}개 중 ${c.mySatisfied}개가 맞아요`;
+  }
   else {
     const changed = (c ? c.place.id : null) !== cardId;
     cardId = c ? c.place.id : null;

@@ -53,3 +53,14 @@ button:disabled { opacity: .45; cursor: default; }
 .med-text { font-size: 16px; margin: 0 0 10px; }
 .med-lines { margin: 0 0 10px; padding-left: 18px; font-size: 14px; }
 .ok-btn { border-color: var(--want) !important; color: var(--want); font-weight: 700; }
+/* 확정 화면 (폰): 공개 결과 / 나만 보는 것 구분 */
+.done-card { border: 2px solid var(--want); background: #f3faf5; animation: slidein .35s ease-out; }
+.done-badge { font-weight: 800; color: var(--want); margin-bottom: 4px; }
+.done-stats { margin-top: 8px; font-weight: 700; font-size: 14px; }
+.others summary { cursor: pointer; font-weight: 700; font-size: 15px; }
+.others[open] summary { margin-bottom: 8px; }
+.result-row { padding: 8px 0; border-top: 1px solid var(--line); }
+.result-row .rname { font-weight: 700; font-size: 14px; }
+.result-row .rstat { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.private-box { border: 1.5px dashed var(--allergy); border-radius: 14px; padding: 14px 16px; background: #faf8fd; }
+.private-head { font-weight: 800; color: var(--allergy); font-size: 14px; margin-bottom: 6px; }
