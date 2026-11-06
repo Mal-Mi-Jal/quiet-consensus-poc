@@ -587,7 +587,7 @@ public class RoomService {
         for (Engine.Scored s : room.result.ranking()) {
             int id = s.restaurant().id();
             if (active.stream().allMatch(p -> Boolean.TRUE.equals(p.reactions.get(id)))) {
-                finalizeLocked(room, new Engine.Decision(s, s.min() + 1e-9 >= cfg.floor(), active.size()), "모두 👍");
+                finalizeLocked(room, new Engine.Decision(s, s.min() + 1e-9 >= cfg.floor(), active.size()), "모두 👍를 눌렀어요");
                 return true;
             }
         }

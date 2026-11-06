@@ -216,7 +216,7 @@ class RoomServiceTest {
         s.react("r", "p2", top, true);
         assertThat(cap.lastPublic().phase()).isEqualTo(Views.Phase.DONE);
         assertThat(cap.lastPublic().winner().id()).isEqualTo(top);
-        assertThat(cap.lastPublic().winnerReason()).isEqualTo("모두 👍");
+        assertThat(cap.lastPublic().winnerReason()).isEqualTo("모두 👍를 눌렀어요");
     }
 
     // ---------------------------------------------------------------- 마감 · 결정 규칙
