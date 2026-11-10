@@ -1,6 +1,10 @@
 # 🤫 Quiet Consensus — 눈치 안 보는 실시간 합의 엔진
 
-> 각자 **비밀로** 원하는 걸 넣으면, 모두가 보는 화면에서 **"가장 덜 손해 보는 안"**을 실시간으로 찾습니다.
+> 각자 **비밀로** 원하는 걸 넣으면, 모두가 보는 화면에서 "가장 덜 손해 보는 안"
+
+https://github.com/user-attachments/assets/86fc5911-6619-4f89-beb3-1e8d81a9fbfe
+
+을 실시간으로 찾습니다.
 > 데모 상황: 팀 점심·회식 장소 정하기 (가상 식당 25곳)
 
 `2026.10 – 2026.11 · 개인 프로젝트 (설계 · 백엔드 · 화면 · 평가)` · Java 21 · Spring Boot 4 · WebSocket(STOMP) · Claude API
@@ -13,7 +17,9 @@
 
 <sub>2배속 · 공용 화면(TV) + 폰 3대를 동시에 녹화 · AI 키 없이 실행해서 중재자 질문은 코드가 만든 기본 문장입니다</sub>
 
-<!-- 전체 영상(84초): github.com에서 이 README를 편집해 mp4를 이 줄 자리에 끌어다 놓으세요 -->
+https://github.com/user-attachments/assets/be72130d-4ee6-41f8-8dd4-dbb983f4bdbd
+
+
 
 <!-- 배포 링크: 배포 후 추가 -->
 
